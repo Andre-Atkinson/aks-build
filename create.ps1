@@ -99,6 +99,7 @@ terraform apply --auto-approve
 #Configure kubectl
 az aks get-credentials --resource-group $(terraform output -raw resource_group_name) --name $(terraform output -raw kubernetes_cluster_name)
 Set-Location ..
+start-sleep 30
 
 #Create snapshotclass
 write-host "Adding Snapshot class" -ForegroundColor Green
