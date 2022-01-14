@@ -16,7 +16,7 @@ provider "azurerm" {
 
 resource "random_integer" "random" {
   min = 1
-  max = 50000
+  max = 500000
 }
 
 resource "azurerm_resource_group" "default" {
