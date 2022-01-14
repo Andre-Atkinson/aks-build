@@ -3,11 +3,19 @@ terraform {
     azurerm = {
       source  = "hashicorp/azurerm"
     }
+    random = {
+      source = "hashicorp/random"
+      version = "3.1.0"
+    }
   }
 }
 
 provider "azurerm" {
   features {}
+}
+
+resource "random_string" "random" {
+  length           = 6
 }
 
 resource "azurerm_resource_group" "default" {
@@ -38,7 +46,7 @@ resource "azurerm_subnet" "default" {
 }
 
 resource "azurerm_storage_account" "default" {
-  name                     = "demoaks001"
+  name                     = "k10demobackups-${random_string.random.result}"
   resource_group_name      = azurerm_resource_group.default.name
   location                 = azurerm_resource_group.default.location
   account_tier             = "Standard"
@@ -46,7 +54,7 @@ resource "azurerm_storage_account" "default" {
 }
 
 resource "azurerm_storage_container" "default" {
-  name                  = "k10demobackups0001"
+  name                  = "k10-${random_string.random.result}"
   storage_account_name  = azurerm_storage_account.default.name
   container_access_type = "private"
 }
