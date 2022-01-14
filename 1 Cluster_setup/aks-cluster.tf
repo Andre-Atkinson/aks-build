@@ -14,8 +14,9 @@ provider "azurerm" {
   features {}
 }
 
-resource "random_string" "random" {
-  length           = 6
+resource "random_integer" "random" {
+  min = 1
+  max = 50000
 }
 
 resource "azurerm_resource_group" "default" {
@@ -46,7 +47,7 @@ resource "azurerm_subnet" "default" {
 }
 
 resource "azurerm_storage_account" "default" {
-  name                     = "k10demobackups-${random_string.random.result}"
+  name                     = "k10demobackup${random_integer.random.result}"
   resource_group_name      = azurerm_resource_group.default.name
   location                 = azurerm_resource_group.default.location
   account_tier             = "Standard"
@@ -54,7 +55,7 @@ resource "azurerm_storage_account" "default" {
 }
 
 resource "azurerm_storage_container" "default" {
-  name                  = "k10-${random_string.random.result}"
+  name                  = "k10${random_integer.random.result}"
   storage_account_name  = azurerm_storage_account.default.name
   container_access_type = "private"
 }
