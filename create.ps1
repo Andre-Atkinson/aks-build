@@ -3,6 +3,7 @@
 $kubectl = 0
 $helm = 0
 $AZ = 0
+$terraform = 0
 
 #Check to see if script is running with Admin privileges
 if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -37,6 +38,21 @@ if ($helm -eq 1) {
     Copy-Item "C:\helm\windows-amd64\helm.exe" -Destination "C:\helm"
     Remove-Item "C:\helm\helmzip.zip"
     Remove-Item "C:\helm\windows-amd64" -Recurse
+
+    $oldPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
+    if ($oldPath.Split(';') -inotcontains 'C:\helm') {
+ `
+            [Environment]::SetEnvironmentVariable('Path', $('{0};C:\helm' -f $oldPath), [EnvironmentVariableTarget]::Machine) `
+
+    }
+}
+
+if ($terraform -eq 1) {
+    new-item  -path "C:\terraform" -ItemType Directory -Force
+    write-host "Downloading Terraform" -ForegroundColor Green
+    Invoke-WebRequest -OutFile "C:\terraform\terra.zip" -Uri 'https://releases.hashicorp.com/terraform/1.1.3/terraform_1.1.3_windows_amd64.zip' -UseBasicParsing
+    Get-ChildItem 'C:\terraform\' -Filter *.zip | Expand-Archive -DestinationPath 'C:\terraform' -Force
+    Remove-Item "C:\terraform\terra.zip"
 
     $oldPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
     if ($oldPath.Split(';') -inotcontains 'C:\helm') {
