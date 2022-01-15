@@ -16,6 +16,9 @@ if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]:
 #download Helm and add to environment variables
 #download the kubectl V1.21.7 and add to the system environment variables
 if ($kubectl -eq 1) {
+    if(Test-Path "C:\kubectl\kubectl.exe"){
+        Write-Host "Kubectl exists, skipping" -ForegroundColor Green}
+    else {
     new-item  -path "C:\kubectl" -ItemType Directory -Force
     write-host "Downloading Kubectl" -ForegroundColor Green
     Invoke-WebRequest -OutFile "c:\users\$env:UserName\Downloads\kubectl.exe" -Uri "https://dl.k8s.io/release/v1.21.7/bin/windows/amd64/kubectl.exe" -UseBasicParsing
@@ -30,7 +33,12 @@ if ($kubectl -eq 1) {
     }
     Start-Sleep 2
 }
+}
+
 if ($helm -eq 1) {
+    if(Test-Path "C:\helm\windows-amd64\helm.exe"){
+        Write-Host "Helm exists, skipping" -ForegroundColor Green}
+    else {
     new-item  -path "C:\helm" -ItemType Directory -Force
     write-host "Downloading Helm" -ForegroundColor Green
     Invoke-WebRequest -OutFile "C:\helm\helmzip.zip" -Uri 'https://get.helm.sh/helm-v3.7.1-windows-amd64.zip' -UseBasicParsing
@@ -46,8 +54,12 @@ if ($helm -eq 1) {
 
     }
 }
+}
 
 if ($terraform -eq 1) {
+    if(Test-Path "C:\terraform\terraform.exe"){
+        Write-Host "Terraform exists, skipping" -ForegroundColor Green}
+    else {
     new-item  -path "C:\terraform" -ItemType Directory -Force
     write-host "Downloading Terraform" -ForegroundColor Green
     Invoke-WebRequest -OutFile "C:\terraform\terra.zip" -Uri 'https://releases.hashicorp.com/terraform/1.1.3/terraform_1.1.3_windows_amd64.zip' -UseBasicParsing
@@ -57,13 +69,17 @@ if ($terraform -eq 1) {
     $oldPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
     if ($oldPath.Split(';') -inotcontains 'C:\helm') {
  `
-            [Environment]::SetEnvironmentVariable('Path', $('{0};C:\helm' -f $oldPath), [EnvironmentVariableTarget]::Machine) `
+            [Environment]::SetEnvironmentVariable('Path', $('{0};C:\terraform' -f $oldPath), [EnvironmentVariableTarget]::Machine) `
 
     }
+}
 }
 
 #download Azure CLI and add to environment variables
 if ($AZ -eq 1){
+    if(Test-Path "C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin"){
+        Write-Host "Azure CLI exists, skipping" -ForegroundColor Green}
+    else {
 $ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri https://aka.ms/installazurecliwindows `
  -OutFile .\AzureCLI.msi; Start-Process msiexec.exe -Wait -ArgumentList '/I AzureCLI.msi /quiet'; Remove-Item .\AzureCLI.msi
 
@@ -73,6 +89,7 @@ $ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri https://aka.ms/
          [Environment]::SetEnvironmentVariable('Path', $('{0};C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin' -f $oldPath), [EnvironmentVariableTarget]::Machine) `
 
  }
+}
 }
  #Refresh path variable to allow Helm/Kubectl to work.
 $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
