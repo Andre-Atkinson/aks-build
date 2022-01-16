@@ -13,86 +13,95 @@ if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]:
     exit;
 }
 
+#Add modules
+if (!(Get-Module -Name AZ -ListAvailable)) {
+    write-host "Installing Azure Powershell module" -ForegroundColor Green
+    Install-Module -Name Az -Scope CurrentUser -Repository PSGallery -Force
+}
 #download Helm and add to environment variables
 #download the kubectl V1.21.7 and add to the system environment variables
 if ($kubectl -eq 1) {
-    if(Test-Path "C:\kubectl\kubectl.exe"){
-        Write-Host "Kubectl exists, skipping" -ForegroundColor Green}
-    else {
-    new-item  -path "C:\kubectl" -ItemType Directory -Force
-    write-host "Downloading Kubectl" -ForegroundColor Green
-    Invoke-WebRequest -OutFile "c:\users\$env:UserName\Downloads\kubectl.exe" -Uri "https://dl.k8s.io/release/v1.21.7/bin/windows/amd64/kubectl.exe" -UseBasicParsing
-    Copy-Item "c:\users\$env:UserName\Downloads\kubectl.exe" -Destination "C:\kubectl"
-
-
-    $oldPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
-    if ($oldPath.Split(';') -inotcontains 'C:\kubectl') {
- `
-            [Environment]::SetEnvironmentVariable('Path', $('{0};C:\kubectl' -f $oldPath), [EnvironmentVariableTarget]::Machine) `
-
+    if (Test-Path "C:\kubectl\kubectl.exe") {
+        Write-Host "Kubectl exists, skipping" 
     }
-    Start-Sleep 2
-}
+    else {
+        new-item  -path "C:\kubectl" -ItemType Directory -Force
+        write-host "Downloading Kubectl" -ForegroundColor Green
+        Invoke-WebRequest -OutFile "c:\users\$env:UserName\Downloads\kubectl.exe" -Uri "https://dl.k8s.io/release/v1.21.7/bin/windows/amd64/kubectl.exe" -UseBasicParsing
+        Copy-Item "c:\users\$env:UserName\Downloads\kubectl.exe" -Destination "C:\kubectl"
+
+
+        $oldPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
+        if ($oldPath.Split(';') -inotcontains 'C:\kubectl') {
+ `
+                [Environment]::SetEnvironmentVariable('Path', $('{0};C:\kubectl' -f $oldPath), [EnvironmentVariableTarget]::Machine) `
+
+        }
+        Start-Sleep 2
+    }
 }
 
 if ($helm -eq 1) {
-    if(Test-Path "C:\helm\windows-amd64\helm.exe"){
-        Write-Host "Helm exists, skipping" -ForegroundColor Green}
-    else {
-    new-item  -path "C:\helm" -ItemType Directory -Force
-    write-host "Downloading Helm" -ForegroundColor Green
-    Invoke-WebRequest -OutFile "C:\helm\helmzip.zip" -Uri 'https://get.helm.sh/helm-v3.7.1-windows-amd64.zip' -UseBasicParsing
-    Get-ChildItem 'C:\helm\' -Filter *.zip | Expand-Archive -DestinationPath 'C:\helm\' -Force
-    Copy-Item "C:\helm\windows-amd64\helm.exe" -Destination "C:\helm"
-    Remove-Item "C:\helm\helmzip.zip"
-    Remove-Item "C:\helm\windows-amd64" -Recurse
-
-    $oldPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
-    if ($oldPath.Split(';') -inotcontains 'C:\helm') {
- `
-            [Environment]::SetEnvironmentVariable('Path', $('{0};C:\helm' -f $oldPath), [EnvironmentVariableTarget]::Machine) `
-
+    if (Test-Path "C:\helm\windows-amd64\helm.exe") {
+        Write-Host "Helm exists, skipping" -ForegroundColor Green
     }
-}
+    else {
+        new-item  -path "C:\helm" -ItemType Directory -Force
+        write-host "Downloading Helm" -ForegroundColor Green
+        Invoke-WebRequest -OutFile "C:\helm\helmzip.zip" -Uri 'https://get.helm.sh/helm-v3.7.1-windows-amd64.zip' -UseBasicParsing
+        Get-ChildItem 'C:\helm\' -Filter *.zip | Expand-Archive -DestinationPath 'C:\helm\' -Force
+        Copy-Item "C:\helm\windows-amd64\helm.exe" -Destination "C:\helm"
+        Remove-Item "C:\helm\helmzip.zip"
+        Remove-Item "C:\helm\windows-amd64" -Recurse
+
+        $oldPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
+        if ($oldPath.Split(';') -inotcontains 'C:\helm') {
+ `
+                [Environment]::SetEnvironmentVariable('Path', $('{0};C:\helm' -f $oldPath), [EnvironmentVariableTarget]::Machine) `
+
+        }
+    }
 }
 
 if ($terraform -eq 1) {
-    if(Test-Path "C:\terraform\terraform.exe"){
-        Write-Host "Terraform exists, skipping" -ForegroundColor Green}
-    else {
-    new-item  -path "C:\terraform" -ItemType Directory -Force
-    write-host "Downloading Terraform" -ForegroundColor Green
-    Invoke-WebRequest -OutFile "C:\terraform\terra.zip" -Uri 'https://releases.hashicorp.com/terraform/1.1.3/terraform_1.1.3_windows_amd64.zip' -UseBasicParsing
-    Get-ChildItem 'C:\terraform\' -Filter *.zip | Expand-Archive -DestinationPath 'C:\terraform' -Force
-    Remove-Item "C:\terraform\terra.zip"
-
-    $oldPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
-    if ($oldPath.Split(';') -inotcontains 'C:\helm') {
- `
-            [Environment]::SetEnvironmentVariable('Path', $('{0};C:\terraform' -f $oldPath), [EnvironmentVariableTarget]::Machine) `
-
+    if (Test-Path "C:\terraform\terraform.exe") {
+        Write-Host "Terraform exists, skipping" -ForegroundColor Green
     }
-}
+    else {
+        new-item  -path "C:\terraform" -ItemType Directory -Force
+        write-host "Downloading Terraform" -ForegroundColor Green
+        Invoke-WebRequest -OutFile "C:\terraform\terra.zip" -Uri 'https://releases.hashicorp.com/terraform/1.1.3/terraform_1.1.3_windows_amd64.zip' -UseBasicParsing
+        Get-ChildItem 'C:\terraform\' -Filter *.zip | Expand-Archive -DestinationPath 'C:\terraform' -Force
+        Remove-Item "C:\terraform\terra.zip"
+
+        $oldPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
+        if ($oldPath.Split(';') -inotcontains 'C:\helm') {
+ `
+                [Environment]::SetEnvironmentVariable('Path', $('{0};C:\terraform' -f $oldPath), [EnvironmentVariableTarget]::Machine) `
+
+        }
+    }
 }
 
 #download Azure CLI and add to environment variables
-if ($AZ -eq 1){
-    if(Test-Path "C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin"){
-        Write-Host "Azure CLI exists, skipping" -ForegroundColor Green}
+if ($AZ -eq 1) {
+    if (Test-Path "C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin") {
+        Write-Host "Azure CLI exists, skipping" -ForegroundColor Green
+    }
     else {
-$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri https://aka.ms/installazurecliwindows `
- -OutFile .\AzureCLI.msi; Start-Process msiexec.exe -Wait -ArgumentList '/I AzureCLI.msi /quiet'; Remove-Item .\AzureCLI.msi
+        $ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri https://aka.ms/installazurecliwindows `
+            -OutFile .\AzureCLI.msi; Start-Process msiexec.exe -Wait -ArgumentList '/I AzureCLI.msi /quiet'; Remove-Item .\AzureCLI.msi
 
- $oldPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
- if ($oldPath.Split(';') -inotcontains 'C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin') {
+        $oldPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
+        if ($oldPath.Split(';') -inotcontains 'C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin') {
 `
-         [Environment]::SetEnvironmentVariable('Path', $('{0};C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin' -f $oldPath), [EnvironmentVariableTarget]::Machine) `
+                [Environment]::SetEnvironmentVariable('Path', $('{0};C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin' -f $oldPath), [EnvironmentVariableTarget]::Machine) `
 
- }
+        }
+    }
 }
-}
- #Refresh path variable to allow Helm/Kubectl to work.
-$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+#Refresh path variable to allow Helm/Kubectl to work.
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
 
 #Log into Azure CLI
 az login
@@ -101,7 +110,7 @@ az login
 write-host "Creating Service Principal to use for K8s" -ForegroundColor Green
 az ad sp create-for-rbac --name "k8s" --skip-assignment | out-file sp.txt
 Start-Sleep 5
-$secrets=Get-Content .\sp.txt | ConvertFrom-Json
+$secrets = Get-Content .\sp.txt | ConvertFrom-Json
 Set-Item -Path env:TF_VAR_username -Value "$env:USERNAME"
 Set-Item -Path env:TF_VAR_appId -Value $secrets.appId
 Set-Item -Path env:TF_VAR_password -Value $secrets.password
@@ -145,8 +154,27 @@ Write-Host "Pods are ready, moving on" -ForegroundColor Green
 $secret = kubectl get secrets -n kasten-io | select-string -Pattern "k10-k10-token-\w*" | ForEach-Object { $_.Matches } | ForEach-Object { $_.Value }
 $k10token = kubectl -n kasten-io -ojson get secret $secret | convertfrom-json | Select-Object data
 
+#Create DNS records for Pacman
+$randint = Get-Random -Maximum 5000
+$pacmanip = kubectl get service -n pacman pacman -o=jsonpath='{.status.loadBalancer.ingress[0].ip}'
+$pacman = get-azpublicipaddress | Where-Object { $_.IpAddress -eq "$pacmanip" }
+$pacman.DnsSettings = @{"DomainNameLabel" = "k10pacmandemo$randint" }
+Set-AzPublicIpAddress -PublicIpAddress $pacman
+$pacman = get-azpublicipaddress | Where-Object { $_.IpAddress -eq "$pacmanip" }
+$pacmanfqdn = $pacman.DnsSettings.Fqdn
+
+#Create DNS records for Kasten
+$k10ip = kubectl get service -n kasten-io gateway-ext -o=jsonpath='{.status.loadBalancer.ingress[0].ip}'
+$k10 = get-azpublicipaddress | Where-Object { $_.IpAddress -eq "$k10ip" }
+$k10.DnsSettings = @{"DomainNameLabel" = "k10kastendemo$randint" }
+Set-AzPublicIpAddress -PublicIpAddress $k10
+$k10 = get-azpublicipaddress | Where-Object { $_.IpAddress -eq "$k10ip" }
+$k10fqdn = $k10.DnsSettings.Fqdn
+
 Clear-Host
-Write-Host "Please log into the Kasten Dashboard using the token below `n" -ForegroundColor blue
-Write-Host '#########################################################################'  -ForegroundColor Green
+Write-Host "Pacman is now available at http://$pacmanfqdn" -ForegroundColor Green
+Write-Host "Kasten dashboard is now available at http://$k10fqdn/k10/" -ForegroundColor Green
+Write-Host "Please log into the Kasten Dashboard using the token below (Hashes not included) `n" -ForegroundColor blue
+Write-Host '#########################################################################'  -ForegroundColor red
 Write-Host ([Text.Encoding]::Utf8.GetString([Convert]::FromBase64String($k10token.data.token))) -ForegroundColor Green
-Write-Host '#########################################################################'  -ForegroundColor Green
+Write-Host '#########################################################################'  -ForegroundColor red
