@@ -17,6 +17,7 @@ if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]:
 if (!(Get-Module -Name AZ -ListAvailable)) {
     write-host "Installing Azure Powershell module" -ForegroundColor Green
     Install-Module -Name Az -Scope CurrentUser -Repository PSGallery -Force
+    Import-Module -Name Az    
 }
 #download Helm and add to environment variables
 #download the kubectl V1.21.7 and add to the system environment variables
