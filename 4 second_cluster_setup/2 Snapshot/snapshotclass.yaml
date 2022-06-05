@@ -1,0 +1,11 @@
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  annotations:
+    k10.kasten.io/is-snapshot-class: "true"
+  name: csi-azuredisk-vsc
+driver: disk.csi.azure.com
+deletionPolicy: Delete
+parameters:
+  incremental: "true"

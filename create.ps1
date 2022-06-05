@@ -52,11 +52,43 @@ terraform init
 terraform apply --auto-approve
 Set-Location ..
 
+###################################################################################
+#Deploy second cluster
+#Create Cluster
+write-host "Creating second Kubernetes cluster" -ForegroundColor Green
+Set-Location '.\4 second_cluster_setup\1 Cluster_setup'
+terraform init
+terraform apply --auto-approve
+
+#Configure kubectl
+az aks get-credentials --resource-group $(terraform output -raw resource_group_name) --name $(terraform output -raw kubernetes_cluster_name)
+Set-Location ..
+kubectl config use-context demo-aks-dev 
+start-sleep 30
+
+#Create snapshotclass
+write-host "Adding Snapshot class" -ForegroundColor Green
+Set-Location '.\2 Snapshot'
+kubectl apply -f snapshotclass.yaml
+Set-Location ..
+start-sleep 10
+
+#install K10 
+write-host "Installing Kasten" -ForegroundColor Green
+Set-Location '.\3 helm'
+terraform init
+terraform apply --auto-approve
+Set-Location ..\..
+
+#Change context back to prod
+kubectl config use-context demo-aks-prod
+###################################################################################
+
 #wait for pods to come up
 $ready = kubectl get pod -n kasten-io --selector=component=catalog -o=jsonpath='{.items[*].status.phase}'
 do {
     Write-Host "Waiting for pods to be ready" -ForegroundColor Green
-    start-sleep 20
+    start-sleep 10
     $ready = kubectl get pod -n kasten-io --selector=component=catalog -o=jsonpath='{.items[*].status.phase}'
 } while ($ready -notlike "Running")
 Write-Host "Pods are ready, moving on" -ForegroundColor Green

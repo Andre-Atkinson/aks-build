@@ -61,14 +61,14 @@ resource "azurerm_storage_container" "default" {
 }
 
 resource "azurerm_kubernetes_cluster" "default" {
-  name                = "demo-aks"
+  name                = "demo-aks-prod"
   location            = azurerm_resource_group.default.location
   resource_group_name = azurerm_resource_group.default.name
-  dns_prefix          = "demo-k8s"
+  dns_prefix          = "demo-k8s-prod"
 
 
   default_node_pool {
-    name            = "default"
+    name            = "default-prod"
     node_count      = 2
     vm_size         = "Standard_D2_v2"
     os_disk_size_gb = 30
