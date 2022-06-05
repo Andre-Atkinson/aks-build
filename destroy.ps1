@@ -14,12 +14,13 @@ Set-Item -Path env:TF_VAR_tenant -Value $secrets.tenant
 
 #Deploy second cluster
 #Create Cluster
-write-host "Creating second Kubernetes cluster" -ForegroundColor Green
+write-host "Destroying second Kubernetes cluster" -ForegroundColor Green
 Set-Location '.\4 second_cluster_setup\1 Cluster_setup'
 terraform destroy --auto-approve
+cd ..\..
 
 #Delete Cluster
-write-host "Deleting Kubernetes cluster" -ForegroundColor Green
+write-host "Destroy first Azure resources and First cluster" -ForegroundColor Green
 Set-Location '.\1 Cluster_setup'
 terraform init
 terraform destroy --auto-approve
