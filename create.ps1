@@ -98,10 +98,9 @@ $secret = kubectl get secrets -n kasten-io | select-string -Pattern "k10-k10-tok
 $k10token = kubectl -n kasten-io -ojson get secret $secret | convertfrom-json | Select-Object data
 
 #Create DNS records for Pacman
-$randint = Get-Random -Maximum 5000
 $pacmanip = kubectl get service -n pacman pacman -o=jsonpath='{.status.loadBalancer.ingress[0].ip}'
 $pacman = get-azpublicipaddress | Where-Object { $_.IpAddress -eq "$pacmanip" }
-$pacman.DnsSettings = @{"DomainNameLabel" = "k10pacmandemo$randint" }
+$pacman.DnsSettings = @{"DomainNameLabel" = "k10pacmandemo-prod" }
 Set-AzPublicIpAddress -PublicIpAddress $pacman
 $pacman = get-azpublicipaddress | Where-Object { $_.IpAddress -eq "$pacmanip" }
 $pacmanfqdn = $pacman.DnsSettings.Fqdn
@@ -109,10 +108,30 @@ $pacmanfqdn = $pacman.DnsSettings.Fqdn
 #Create DNS records for Kasten
 $k10ip = kubectl get service -n kasten-io gateway-ext -o=jsonpath='{.status.loadBalancer.ingress[0].ip}'
 $k10 = get-azpublicipaddress | Where-Object { $_.IpAddress -eq "$k10ip" }
-$k10.DnsSettings = @{"DomainNameLabel" = "k10kastendemo$randint" }
+$k10.DnsSettings = @{"DomainNameLabel" = "k10kastendemo-prod" }
 Set-AzPublicIpAddress -PublicIpAddress $k10
 $k10 = get-azpublicipaddress | Where-Object { $_.IpAddress -eq "$k10ip" }
 $k10fqdn = $k10.DnsSettings.Fqdn
+
+#Change context back to DEV
+kubectl config use-context demo-aks-dev
+
+start-sleep -Seconds 5
+#Get K10 secret and extract login token
+$secret_dev = kubectl get secrets -n kasten-io | select-string -Pattern "k10-k10-token-\w*" | ForEach-Object { $_.Matches } | ForEach-Object { $_.Value }
+$k10token_dev = kubectl -n kasten-io -ojson get secret $secret_dev | convertfrom-json | Select-Object data
+
+#Create DNS records for Kasten
+$k10ip_dev = kubectl get service -n kasten-io gateway-ext -o=jsonpath='{.status.loadBalancer.ingress[0].ip}'
+$k10_dev = get-azpublicipaddress | Where-Object { $_.IpAddress -eq "$k10ip_dev" }
+$k10_dev.DnsSettings = @{"DomainNameLabel" = "k10kastendemo-dev" }
+Set-AzPublicIpAddress -PublicIpAddress $k10_dev
+$k10_dev = get-azpublicipaddress | Where-Object { $_.IpAddress -eq "$k10ip_dev" }
+$k10fqdn_dev = $k10_dev.DnsSettings.Fqdn
+
+#Change context back to prod
+kubectl config use-context demo-aks-prod
+start-sleep -Seconds 5
 
 Clear-Host
 Write-Host "Pacman is now available at http://$pacmanfqdn" -ForegroundColor Green
@@ -120,4 +139,10 @@ Write-Host "Kasten dashboard is now available at http://$k10fqdn/k10/" -Foregrou
 Write-Host "Please log into the Kasten Dashboard using the token below (Hashes not included) `n" -ForegroundColor blue
 Write-Host '#########################################################################'  -ForegroundColor red
 Write-Host ([Text.Encoding]::Utf8.GetString([Convert]::FromBase64String($k10token.data.token))) -ForegroundColor Green
+Write-Host '#########################################################################'  -ForegroundColor red
+Write-Host '#########################################################################'  -ForegroundColor red
+Write-Host "Kasten DEV dashboard is now available at http://$k10fqdn_dev/k10/" -ForegroundColor Green
+Write-Host "Please log into the Kasten Dashboard using the token below (Hashes not included) `n" -ForegroundColor blue
+Write-Host '#########################################################################'  -ForegroundColor red
+Write-Host ([Text.Encoding]::Utf8.GetString([Convert]::FromBase64String($k10token_dev.data.token))) -ForegroundColor Green
 Write-Host '#########################################################################'  -ForegroundColor red
