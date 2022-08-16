@@ -28,6 +28,7 @@ resource "azurerm_kubernetes_cluster" "default" {
   location            = data.azurerm_resource_group.default.location
   resource_group_name = data.azurerm_resource_group.default.name
   dns_prefix          = "demo-k8s-dev"
+  kubernetes_version  = 1.21
 
 
   default_node_pool {
