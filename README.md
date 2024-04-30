@@ -17,3 +17,7 @@ git clone https://github.com/Andre-Atkinson/aks-build.git
 cd aks-build
 .\destroy.ps1 -subscription "xx-xxx"
 ```
+
+## Youtube Video
+
+[![IMAGE ALT TEXT HERE](logo.jpg)](https://www.youtube.com/watch?v=9wPrIaia0_U)
