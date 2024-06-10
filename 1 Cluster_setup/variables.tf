@@ -13,3 +13,7 @@ variable "subscription" {
 variable "randomNumber" {
   description = "Azure Kubernetes Service Cluster password"
 }
+
+variable tenant {
+  description = "description"
+}
