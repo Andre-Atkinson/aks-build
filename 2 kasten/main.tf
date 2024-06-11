@@ -53,3 +53,28 @@ resource "helm_release" "k10" {
     value = "a.a@veeam.com"
   }
 }
+
+# Deploy Wordpress
+resource "helm_release" "wordpress" {
+  name       = "my-release"
+  repository = "oci://registry-1.docker.io/bitnamicharts"
+  chart      = "wordpress"
+  namespace  = "wordpress"
+
+  create_namespace = true
+
+  set {
+    name  = "wordpressUsername"
+    value = "admin"
+  }
+
+  set {
+    name  = "wordpressPassword"
+    value = "password"
+  }
+
+  set {
+    name  = "mariadb.auth.rootPassword"
+    value = "secretpassword"
+  }
+}
