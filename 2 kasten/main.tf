@@ -18,7 +18,7 @@ resource "helm_release" "k10" {
   namespace = "kasten-io"
   repository = "https://charts.kasten.io/"
   chart      = "k10"
-  version    = "7.0.0"
+  version    = "7.0.12"
 
   set {
     name  = "secrets.azureTenantId"

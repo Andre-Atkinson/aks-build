@@ -48,7 +48,7 @@ resource "azurerm_kubernetes_cluster" "default" {
   resource_group_name = azurerm_resource_group.default.name
   
   dns_prefix          = "k10demobackup${var.randomNumber}"
-  kubernetes_version  = 1.28
+  kubernetes_version  = 1.29
 
 
   default_node_pool {
