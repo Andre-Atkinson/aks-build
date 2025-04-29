@@ -47,7 +47,7 @@ catch {
     Write-Host "Kubectl is not installed and will be installed now."
     new-item  -path "C:\kubectl" -ItemType Directory -Force
     write-host "Downloading Kubectl" -ForegroundColor Green
-    Invoke-WebRequest -OutFile "C:\kubectl\kubectl.exe" -Uri "https://dl.k8s.io/release/v1.28.4/bin/windows/amd64/kubectl.exe" -UseBasicParsing
+    Invoke-WebRequest -OutFile "C:\kubectl\kubectl.exe" -Uri "https://dl.k8s.io/release/v1.33.0/bin/windows/amd64/kubectl.exe" -UseBasicParsing
     
     $oldPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
     if ($oldPath.Split(';') -inotcontains 'C:\kubectl') {
@@ -68,7 +68,7 @@ catch {
     Write-Host "helm is not installed and will be installed now."
     new-item  -path "C:\helm" -ItemType Directory -Force
     write-host "Downloading Helm" -ForegroundColor Green
-    Invoke-WebRequest -OutFile "C:\helm\helmzip.zip" -Uri 'https://get.helm.sh/helm-v3.15.1-windows-amd64.zip' -UseBasicParsing
+    Invoke-WebRequest -OutFile "C:\helm\helmzip.zip" -Uri 'https://get.helm.sh/helm-v3.17.3-windows-amd64.zip' -UseBasicParsing
     Get-ChildItem 'C:\helm\' -Filter *.zip | Expand-Archive -DestinationPath 'C:\helm\' -Force
     Copy-Item "C:\helm\windows-amd64\helm.exe" -Destination "C:\helm"
     Remove-Item "C:\helm\helmzip.zip"
@@ -93,11 +93,11 @@ catch {
     Write-Host "Terraform is not installed and will be installed now."
     new-item  -path "C:\Terraform" -ItemType Directory -Force
     write-host "Downloading Terraform" -ForegroundColor Green
-    Invoke-WebRequest -OutFile "C:\terraform\terraform.zip" -Uri 'https://releases.hashicorp.com/terraform/1.8.5/terraform_1.8.5_windows_amd64.zip' -UseBasicParsing
+    Invoke-WebRequest -OutFile "C:\terraform\terraform.zip" -Uri 'https://releases.hashicorp.com/terraform/1.11.4/terraform_1.11.4_windows_amd64.zip' -UseBasicParsing
     Get-ChildItem 'C:\terraform\' -Filter *.zip | Expand-Archive -DestinationPath 'C:\terraform\' -Force
-    Copy-Item "C:\terraform\windows-amd64\terraform.exe" -Destination "C:\helm"
+    Copy-Item "C:\terraform\terraform_1.11.4_windows_amd64\terraform.exe" -Destination "C:\helm"
     Remove-Item "C:\terraform\terraform.zip"
-    Remove-Item "C:\terraform\windows-amd64" -Recurse
+    Remove-Item "C:\terraform\terraform_1.11.4_windows_amd64" -Recurse
 
     $oldPath = [Environment]::GetEnvironmentVariable('Path', [EnvironmentVariableTarget]::Machine)
     if ($oldPath.Split(';') -inotcontains 'C:\terraform') {
