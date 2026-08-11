@@ -132,6 +132,19 @@ environment:
   `terraform plan -destroy` in each `infra/*` directory shows it without
   applying.
 
+## Advanced tuning
+
+`.env` intentionally only holds the handful of values with no safe default
+(subscription/account identity, image path, secret overrides). Everything
+else - node size/count, Kubernetes version, Azure region/location, K10
+chart version, whether the K10 dashboard gets a public LoadBalancer - has a
+sensible default and lives in each module's own `variables.tf`
+(`infra/azure`, `infra/aws`, `infra/kasten-azure`, `infra/kasten-aws`) or the
+app's `chart/values.yaml`. To change one of those, either edit the
+`default = ...` there, or override per-run with Terraform's own mechanism
+(`-var`, or a gitignored `terraform.tfvars` in that directory) / `helm
+--set`, rather than adding it to `.env`.
+
 ## Known gap: cross-cluster import is a manual step for now
 
 Kasten's `ImportPolicy` and `TransformSet` CRDs are what let the EKS-side K10

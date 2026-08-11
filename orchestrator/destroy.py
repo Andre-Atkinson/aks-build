@@ -64,10 +64,12 @@ def main():
     )
 
     print("==> Destroying EKS + VPC")
-    cloud.terraform_destroy(str(INFRA / "aws"))
+    cloud.terraform_destroy(str(INFRA / "aws"), variables={"region": args.aws_region})
 
     print("==> Destroying AKS + storage account")
-    cloud.terraform_destroy(str(INFRA / "azure"))
+    cloud.terraform_destroy(
+        str(INFRA / "azure"), variables={"subscription_id": args.subscription_id}
+    )
 
     print("\nDone. Double check the Azure and AWS consoles for anything left behind.")
 

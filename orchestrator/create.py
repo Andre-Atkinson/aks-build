@@ -57,11 +57,11 @@ def main():
 
     # --- Phase 1: infra -----------------------------------------------------
     print("==> Provisioning AKS + Azure Blob storage")
-    cloud.terraform_apply(str(INFRA / "azure"))
+    cloud.terraform_apply(str(INFRA / "azure"), variables={"subscription_id": args.subscription_id})
     azure_out = cloud.terraform_output(str(INFRA / "azure"))
 
     print("==> Provisioning EKS + VPC")
-    cloud.terraform_apply(str(INFRA / "aws"))
+    cloud.terraform_apply(str(INFRA / "aws"), variables={"region": args.aws_region})
     aws_out = cloud.terraform_output(str(INFRA / "aws"))
 
     aks_kubeconfig = cloud.write_aks_kubeconfig(
