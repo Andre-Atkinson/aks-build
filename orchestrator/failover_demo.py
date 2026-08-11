@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Simulate an AKS failure and fail the VeeamON Tour app over to EKS.
 
-Replaces corrupt.ps1. Captures the guestbook count on AKS, breaks AKS, then
-(once the EKS-side import/restore step is triggered - see the printed
-instructions) polls EKS until the app is back with the same count.
+Replaces corrupt.ps1. Captures the guestbook count on AKS, breaks AKS,
+triggers the restore on EKS (from the restore point create.py's import step
+already produced there, with the storage-class transform applied), and
+polls EKS until the app is back with the same count.
 
 Usage:
     python failover_demo.py --aks-url http://<aks-ip> --eks-url http://<eks-ip> \\
@@ -17,6 +18,8 @@ import time
 
 import requests
 from kubernetes import client, config as kube_config, stream
+
+from k10_client import K10Client
 
 APP_NAMESPACE = "veeamon-tour"
 
@@ -66,6 +69,13 @@ def main():
     parser.add_argument("--eks-url", required=True, help="http://<eks LoadBalancer IP>")
     parser.add_argument("--mode", choices=["outage", "corrupt"], default="outage")
     parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument(
+        "--restore-point-name",
+        default=None,
+        help="Defaults to the most recently imported RestorePoint on EKS",
+    )
+    parser.add_argument("--transform-set-name", default="azure-to-ebs-storage-class")
+    parser.add_argument("--restore-profile-name", default="azureblob")
     args = parser.parse_args()
 
     print("==> Capturing pre-failure guestbook count on AKS")
@@ -77,16 +87,25 @@ def main():
     else:
         simulate_corruption(args.aks_kubeconfig)
 
-    print(
-        "\n==> AKS side is down. Now trigger the failover on EKS:\n"
-        "    In the EKS K10 dashboard, open the imported veeamon-tour-backup\n"
-        "    restore points and click Restore on the latest one (with the\n"
-        "    storage-class transform applied). k10_client.py's\n"
-        "    restore_from_imported_restore_point() is stubbed pending CRD\n"
-        "    schema confirmation - see that file's docstring.\n"
-        "    This script will now poll EKS until the app is back.\n"
+    print("\n==> AKS side is down. Restoring onto EKS...")
+    eks_k10 = K10Client(args.eks_kubeconfig)
+    restore_point_name = args.restore_point_name
+    if not restore_point_name:
+        latest = eks_k10.latest_restore_point()
+        if not latest:
+            print("FAIL: no RestorePoint found on EKS - did create.py's import step run?")
+            return 1
+        restore_point_name = latest["metadata"]["name"]
+    print(f"    restoring from RestorePoint {restore_point_name}")
+    state = eks_k10.restore_from_restore_point(
+        restore_point_name, args.restore_profile_name, args.transform_set_name
     )
+    print(f"    restore action: {state}")
+    if state != "Complete":
+        print("FAIL: restore did not complete - check the K10 dashboard on EKS")
+        return 1
 
+    print("    restore complete, polling the app...")
     deadline = time.time() + args.timeout
     while time.time() < deadline:
         try:

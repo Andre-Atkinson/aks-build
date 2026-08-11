@@ -85,8 +85,8 @@ source .venv/bin/activate
 python orchestrator/create.py
 ```
 
-`create.py` prints manual next steps for the cross-cluster import + storage
-transform on EKS (see "Known gap" below) before it finishes.
+`create.py` runs the AKS backup+export and the EKS import+transform itself -
+see "Cross-cluster import" below for what's actually verified there.
 
 ```bash
 # 3. Get each cluster's app IP for the demo/failover step
@@ -145,19 +145,34 @@ app's `chart/values.yaml`. To change one of those, either edit the
 (`-var`, or a gitignored `terraform.tfvars` in that directory) / `helm
 --set`, rather than adding it to `.env`.
 
-## Known gap: cross-cluster import is a manual step for now
+## Cross-cluster import: what's verified vs. still assumed
 
-Kasten's `ImportPolicy` and `TransformSet` CRDs are what let the EKS-side K10
-see AKS's exported backups and rewrite the storage class from Azure Disk CSI
-to AWS EBS CSI on restore (see
-[docs.kasten.io/latest/usage/migration](https://docs.kasten.io/latest/usage/migration/)).
-This repo hasn't yet been run against a live K10 9.x cluster to confirm the
-exact CRD schema, so `orchestrator/k10_client.py`'s `create_import_policy`,
-`create_transform_set`, and `restore_from_imported_restore_point` are stubbed
-with `NotImplementedError` and instructions. Until that's spiked and filled
-in, do the import/transform/restore steps once via the K10 dashboard
-(`kubectl port-forward -n kasten-io svc/gateway 8080:8000` on each cluster),
-then automate them here.
+`orchestrator/k10_client.py` drives K10 entirely through its Kubernetes CRDs
+(Policy, Profile, TransformSet, RunAction, RestoreAction) rather than the
+dashboard's internal HTTP API. There is no `ImportPolicy` or generic
+`ActionSet` kind (an earlier version of this file assumed both, incorrectly)
+- cross-cluster import is `action: import` on the same `Policy` kind used
+for backup/export, triggered on demand via `RunAction`.
+
+This schema was verified against a real, locally-running K10 9.0.2 install
+(`kubectl explain <kind> --recursive`, matched against
+`kubectl api-resources`), and further confirmed by actually applying a
+Policy + RunAction shaped exactly like the ones this code generates and
+watching it reach `status.state: Failed` for the *expected* reason (a
+Profile that doesn't exist) rather than a schema-validation error - i.e.
+the structure is confirmed correct, not just plausible from reading docs.
+
+What is **not** independently verified: a real cross-cluster export ->
+import -> restore round trip with actual data, since that needs two real
+clusters and object storage. In particular, the `receiveString` field
+(a shared secret you generate and set identically in both the export and
+import Policy, pairing them - see `create_backup_export_policy` /
+`create_import_policy`) is a schema-and-reconciler-level inference, not a
+confirmed end-to-end behavior. If the first real run's import doesn't pick
+up the export, that pairing mechanism is the first thing to check - compare
+against the K10 dashboard's own "Show import details" flow
+(`kubectl port-forward -n kasten-io svc/gateway 8080:80` on either
+cluster) to see what it generates.
 
 ## Notes
 

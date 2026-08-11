@@ -33,6 +33,23 @@ resource "helm_release" "snapshot_controller" {
   chart            = "snapshot-controller"
 }
 
+# The aws-ebs-csi-driver EKS addon installs the driver but does not create a
+# default StorageClass for it - without this, PVCs restored here (via the
+# TransformSet's storageClassName rewrite) have nothing to bind to.
+resource "kubernetes_storage_class" "ebs_gp3" {
+  metadata {
+    name = "ebs-gp3"
+    annotations = {
+      "storageclass.kubernetes.io/is-default-class" = "true"
+    }
+  }
+  storage_provisioner = "ebs.csi.aws.com"
+  volume_binding_mode = "WaitForFirstConsumer"
+  parameters = {
+    type = "gp3"
+  }
+}
+
 resource "kubernetes_manifest" "ebs_vsc" {
   manifest = {
     apiVersion = "snapshot.storage.k8s.io/v1"

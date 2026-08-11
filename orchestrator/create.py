@@ -12,6 +12,7 @@ automatically - you invoke it yourself, and destroy.py is the teardown path.
 
 import argparse
 import os
+import secrets
 import subprocess
 import sys
 from pathlib import Path
@@ -115,28 +116,40 @@ def main():
     helm(*helm_args, kubeconfig=aks_kubeconfig)
 
     # --- Phase 4: backup + export policy on AKS -----------------------------
+    # The "azureblob" Profile itself is already created by infra/kasten-azure
+    # (Terraform) - just reference it here.
     print("==> Creating backup/export policy on AKS and running it once")
+    receive_string = secrets.token_urlsafe(32)  # pairs this export with the EKS import policy below
     aks_k10 = K10Client(aks_kubeconfig)
-    aks_k10.create_profile_azure_blob(
-        "azureblob", azure_out["storage_account_name"], storage_key, azure_out["storage_container_name"]
+    aks_k10.create_backup_export_policy(
+        "veeamon-tour-backup", APP_NAMESPACE, "azureblob", "azureblob", receive_string
     )
-    aks_k10.create_backup_export_policy("veeamon-tour-backup", APP_NAMESPACE, "azureblob")
-    action_name = aks_k10.run_action("backup", "veeamon-tour-backup")
-    state = aks_k10.wait_for_actionset(action_name)
-    print(f"    backup ActionSet {action_name}: {state}")
+    state, _ = aks_k10.run_policy("veeamon-tour-backup")
+    print(f"    backup+export policy run: {state}")
+    if state != "Complete":
+        print("    backup/export did not complete - check the K10 dashboard on AKS before continuing")
+        return 1
 
     # --- Phase 5: import + transform on EKS ---------------------------------
-    print(
-        "==> Phase 5 (import + transform on EKS) needs a manual step for now.\n"
-        "    k10_client.create_import_policy / create_transform_set are stubbed out\n"
-        "    pending confirmation of K10 9.x's exact CRD schema. In the K10\n"
-        "    dashboard on AKS, open the veeamon-tour-backup policy's export\n"
-        "    action and 'Show import details', then paste that into a new\n"
-        "    Import Policy on the EKS dashboard against the azureblob profile,\n"
-        "    with a transform rewriting storageClassName -> the EKS default\n"
-        "    (gp3/csi-ebs-vsc). See docs.kasten.io/latest/usage/migration/."
-    )
+    print("==> Creating import policy + storage-class transform on EKS, then importing")
+    eks_k10 = K10Client(eks_kubeconfig)
+    # AKS's default StorageClass for the Bitnami MariaDB PVC. Confirm with
+    # `kubectl get storageclass` on the AKS cluster if this repo's Terraform
+    # or the AKS default ever changes.
+    eks_k10.create_transform_set("azure-to-ebs-storage-class", "managed-csi", "ebs-gp3")
+    eks_k10.create_import_policy("veeamon-tour-import", "azureblob", receive_string)
+    state, restore_point = eks_k10.run_policy("veeamon-tour-import")
+    print(f"    import policy run: {state}, restore point: {restore_point}")
+    if state != "Complete" or not restore_point:
+        print("    import did not complete - check the K10 dashboard on EKS before continuing")
+        return 1
 
+    print(
+        "\nImport complete - restore point %s is now visible on EKS.\n"
+        "Run orchestrator/failover_demo.py to simulate an AKS failure and\n"
+        "restore this onto EKS with the storage-class transform applied."
+        % restore_point["name"]
+    )
     print("\nDone. AKS kubeconfig: %s | EKS kubeconfig: %s" % (aks_kubeconfig, eks_kubeconfig))
 
 

@@ -1,21 +1,35 @@
 """Thin Kasten K10 helper built on the official Kubernetes Python client.
 
-K10's policies, profiles, and on-demand actions are all plain Kubernetes
-custom resources - so "automating K10" here means calling the Kubernetes API
-(via the `kubernetes` package's CustomObjectsApi), not the K10 dashboard's
-internal REST API. That's deliberate: CRDs are K10's documented extension
-point, the dashboard's HTTP API is not.
+K10's policies, profiles, and actions are all plain Kubernetes custom
+resources - so "automating K10" here means calling the Kubernetes API (via
+the `kubernetes` package's CustomObjectsApi), not the K10 dashboard's
+internal HTTP API. CRDs are K10's documented extension point; the
+dashboard's HTTP API is not.
 
-Two of these resources (ImportPolicy, TransformSet) are used exactly as
-documented at https://docs.kasten.io/latest/usage/migration/, but this repo
-has not yet been run against a live K10 9.x cluster to confirm the exact
-CRD group/kind/field names - schemas have shifted across K10 major versions
-before. Before relying on `create_import_policy` / `create_transform_set`,
-run:
+Schema below was verified against a real, locally-running K10 9.0.2
+install (`kubectl explain <kind> --recursive` against
+`kubectl api-resources`), and cross-checked by actually applying a Policy +
+RunAction and watching it reach `status.state: Failed` for the expected
+reason (a Profile that doesn't exist) rather than a schema-validation
+error - i.e. the *structure* is confirmed correct, not just plausible from
+docs. What is NOT independently verified end-to-end: a real cross-cluster
+export -> import -> restore cycle with actual data, since that needs two
+real clusters and object storage. In particular, the `receiveString`
+pairing mechanism (see create_export_policy/create_import_policy) is a
+schema-and-reconciler-level inference - K10 accepted and processed a policy
+shaped this way, but a real cross-cluster round trip hasn't been run.
 
-    kubectl api-resources --api-group=config.kio.kasten.io
-
-against your actual cluster and adjust API_GROUP/KIND below if they differ.
+Key corrections vs. earlier assumptions in this file:
+- There is no `ImportPolicy` or generic `ActionSet` kind. Cross-cluster
+  import is `action: import` on the same `Policy` kind used for backup/
+  export (config.kio.kasten.io/v1alpha1), with `importParameters`. On-demand
+  triggering of any Policy is a `RunAction` (actions.kio.kasten.io/v1alpha1)
+  referencing the Policy via `spec.subject`.
+- `TransformSet` does exist as assumed (config.kio.kasten.io/v1alpha1).
+- A one-off restore from an imported restore point is a standalone
+  `RestoreAction` (actions.kio.kasten.io/v1alpha1) whose `spec.subject`
+  references the `RestorePoint` object (apps.kio.kasten.io/v1alpha1) by
+  name, with `spec.transforms[].transformSetRef` applying the TransformSet.
 """
 
 from __future__ import annotations
@@ -24,16 +38,17 @@ import time
 
 from kubernetes import client, config as kube_config
 
-API_GROUP = "config.kio.kasten.io"
-API_VERSION = "v1alpha1"
-ACTIONS_API_GROUP = "actions.kio.kasten.io"
-ACTIONS_API_VERSION = "v1alpha1"
+CONFIG_GROUP = "config.kio.kasten.io"
+CONFIG_VERSION = "v1alpha1"
+ACTIONS_GROUP = "actions.kio.kasten.io"
+ACTIONS_VERSION = "v1alpha1"
+APPS_GROUP = "apps.kio.kasten.io"
+APPS_VERSION = "v1alpha1"
 NAMESPACE = "kasten-io"
 
 
 class K10Client:
     def __init__(self, kube_config_path: str):
-        self.kube_config_path = kube_config_path
         api_client = kube_config.new_client_from_config(config_file=kube_config_path)
         self.custom = client.CustomObjectsApi(api_client)
         self.core = client.CoreV1Api(api_client)
@@ -57,16 +72,22 @@ class K10Client:
     def get_namespaced(self, group: str, version: str, plural: str, namespace: str, name: str):
         return self.custom.get_namespaced_custom_object(group, version, namespace, plural, name)
 
-    # -- verified-against-source-repo resources ------------------------------
+    def _wait_for_state(self, group: str, version: str, plural: str, name: str, timeout_seconds: int):
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            obj = self.get_namespaced(group, version, plural, NAMESPACE, name)
+            state = obj.get("status", {}).get("state")
+            if state in ("Complete", "Failed"):
+                return state, obj
+            time.sleep(10)
+        raise TimeoutError(f"{plural}/{name} did not finish within {timeout_seconds}s")
+
+    # -- profiles -------------------------------------------------------------
 
     def create_profile_azure_blob(
         self, name: str, storage_account: str, storage_key: str, container: str
     ):
-        """Location Profile pointing at an Azure Blob container.
-
-        Schema matches the working profile in the original create.ps1 /
-        infra/kasten-azure, so this one is verified, not assumed.
-        """
+        """Location Profile pointing at an Azure Blob container."""
         secret_name = f"{name}-secret"
         secret_body = client.V1Secret(
             metadata=client.V1ObjectMeta(name=secret_name, namespace=NAMESPACE),
@@ -84,7 +105,7 @@ class K10Client:
                 raise
 
         profile = {
-            "apiVersion": f"{API_GROUP}/{API_VERSION}",
+            "apiVersion": f"{CONFIG_GROUP}/{CONFIG_VERSION}",
             "kind": "Profile",
             "metadata": {"name": name, "namespace": NAMESPACE},
             "spec": {
@@ -104,28 +125,35 @@ class K10Client:
                 },
             },
         }
-        return self.apply_namespaced(API_GROUP, API_VERSION, "profiles", NAMESPACE, profile)
+        return self.apply_namespaced(CONFIG_GROUP, CONFIG_VERSION, "profiles", NAMESPACE, profile)
+
+    # -- policies ---------------------------------------------------------
 
     def create_backup_export_policy(
-        self, name: str, app_namespace: str, profile_name: str, schedule: str = "@daily"
+        self,
+        name: str,
+        app_namespace: str,
+        backup_profile_name: str,
+        export_profile_name: str,
+        receive_string: str,
+        schedule: str = "@daily",
     ):
-        """Policy with backup + export actions, per K10's migration docs."""
+        """Policy with separate backup and export actions (each action kind
+        gets its own `<action>Parameters` sibling - a single action entry
+        with both backupParameters and exportParameters, which the original
+        version of this file used, is not how K10 structures it).
+
+        `receive_string` is a shared secret you choose - the matching
+        Policy's importParameters.receiveString on the destination cluster
+        must use the same value to pair with this export.
+        """
         policy = {
-            "apiVersion": f"{API_GROUP}/{API_VERSION}",
+            "apiVersion": f"{CONFIG_GROUP}/{CONFIG_VERSION}",
             "kind": "Policy",
             "metadata": {"name": name, "namespace": NAMESPACE},
             "spec": {
                 "frequency": schedule,
-                "actions": [
-                    {
-                        "action": "backup",
-                        "exportParameters": {
-                            "frequency": schedule,
-                            "profile": {"name": profile_name, "namespace": NAMESPACE},
-                            "exportData": {"enabled": True},
-                        },
-                    }
-                ],
+                "retention": {"daily": 7},
                 "selector": {
                     "matchExpressions": [
                         {
@@ -135,72 +163,146 @@ class K10Client:
                         }
                     ]
                 },
+                "actions": [
+                    {
+                        "action": "backup",
+                        "backupParameters": {"profile": {"name": backup_profile_name, "namespace": NAMESPACE}},
+                    },
+                    {
+                        "action": "export",
+                        "exportParameters": {
+                            "exportData": {"enabled": True},
+                            "profile": {"name": export_profile_name, "namespace": NAMESPACE},
+                            "receiveString": receive_string,
+                        },
+                    },
+                ],
             },
         }
-        return self.apply_namespaced(API_GROUP, API_VERSION, "policies", NAMESPACE, policy)
+        return self.apply_namespaced(CONFIG_GROUP, CONFIG_VERSION, "policies", NAMESPACE, policy)
+
+    def create_import_policy(
+        self, name: str, import_profile_name: str, receive_string: str, schedule: str = "@daily"
+    ):
+        """Policy with an import action - the destination-cluster counterpart
+        to create_backup_export_policy. `receive_string` must match the
+        source policy's exportParameters.receiveString.
+        """
+        policy = {
+            "apiVersion": f"{CONFIG_GROUP}/{CONFIG_VERSION}",
+            "kind": "Policy",
+            "metadata": {"name": name, "namespace": NAMESPACE},
+            "spec": {
+                "frequency": schedule,
+                "actions": [
+                    {
+                        "action": "import",
+                        "importParameters": {
+                            "profile": {"name": import_profile_name, "namespace": NAMESPACE},
+                            "receiveString": receive_string,
+                        },
+                    }
+                ],
+            },
+        }
+        return self.apply_namespaced(CONFIG_GROUP, CONFIG_VERSION, "policies", NAMESPACE, policy)
+
+    # -- transform sets -----------------------------------------------------
+
+    def create_transform_set(self, name: str, from_storage_class: str, to_storage_class: str):
+        """TransformSet rewriting a PVC's storageClassName on restore."""
+        transform_set = {
+            "apiVersion": f"{CONFIG_GROUP}/{CONFIG_VERSION}",
+            "kind": "TransformSet",
+            "metadata": {"name": name, "namespace": NAMESPACE},
+            "spec": {
+                "comment": f"rewrite storageClassName {from_storage_class} -> {to_storage_class}",
+                "transforms": [
+                    {
+                        "name": "rewrite-storage-class",
+                        "subject": {"resource": "persistentvolumeclaims", "version": "v1"},
+                        "json": [
+                            {
+                                "op": "replace",
+                                "path": "/spec/storageClassName",
+                                "value": to_storage_class,
+                            }
+                        ],
+                    }
+                ],
+            },
+        }
+        return self.apply_namespaced(
+            CONFIG_GROUP, CONFIG_VERSION, "transformsets", NAMESPACE, transform_set
+        )
 
     # -- on-demand actions ----------------------------------------------------
 
-    def run_action(self, action: str, policy_name: str) -> str:
-        """Create an ActionSet to trigger a policy's action immediately.
+    def run_policy(self, policy_name: str, timeout_seconds: int = 1800):
+        """Create a RunAction to trigger a Policy immediately, and wait for it.
 
-        Returns the created ActionSet's name for status polling.
+        Returns (state, restore_point_ref) - restore_point_ref is the
+        {"name", "namespace"} of the RestorePoint created by a backup or
+        import action, or None for actions that don't produce one.
         """
-        action_set = {
-            "apiVersion": f"{ACTIONS_API_GROUP}/{ACTIONS_API_VERSION}",
-            "kind": "ActionSet",
-            "metadata": {"generateName": f"{policy_name}-{action}-", "namespace": NAMESPACE},
+        run_action = {
+            "apiVersion": f"{ACTIONS_GROUP}/{ACTIONS_VERSION}",
+            "kind": "RunAction",
+            "metadata": {"generateName": f"{policy_name}-run-", "namespace": NAMESPACE},
             "spec": {
-                "actions": [
-                    {
-                        "action": action,
-                        "object": {
-                            "apiVersion": f"{API_GROUP}/{API_VERSION}",
-                            "kind": "Policy",
-                            "name": policy_name,
-                            "namespace": NAMESPACE,
-                        },
-                    }
-                ]
+                "subject": {
+                    "apiVersion": f"{CONFIG_GROUP}/{CONFIG_VERSION}",
+                    "kind": "Policy",
+                    "name": policy_name,
+                    "namespace": NAMESPACE,
+                }
             },
         }
         created = self.custom.create_namespaced_custom_object(
-            ACTIONS_API_GROUP, ACTIONS_API_VERSION, NAMESPACE, "actionsets", action_set
+            ACTIONS_GROUP, ACTIONS_VERSION, NAMESPACE, "runactions", run_action
         )
-        return created["metadata"]["name"]
+        name = created["metadata"]["name"]
+        state, obj = self._wait_for_state(ACTIONS_GROUP, ACTIONS_VERSION, "runactions", name, timeout_seconds)
+        return state, obj.get("status", {}).get("restorePoint")
 
-    def wait_for_actionset(self, name: str, timeout_seconds: int = 1800) -> str:
-        """Poll an ActionSet's status.state until it leaves 'Running'."""
-        deadline = time.time() + timeout_seconds
-        while time.time() < deadline:
-            obj = self.get_namespaced(
-                ACTIONS_API_GROUP, ACTIONS_API_VERSION, "actionsets", NAMESPACE, name
-            )
-            state = obj.get("status", {}).get("state")
-            if state in ("Complete", "Failed"):
-                return state
-            time.sleep(10)
-        raise TimeoutError(f"ActionSet {name} did not finish within {timeout_seconds}s")
+    def latest_restore_point(self):
+        """Most recently created RestorePoint - lets failover_demo.py find the
+        one create.py's import step produced without a name being manually
+        passed between script runs.
+        """
+        items = self.custom.list_namespaced_custom_object(
+            APPS_GROUP, APPS_VERSION, NAMESPACE, "restorepoints"
+        )["items"]
+        if not items:
+            return None
+        return max(items, key=lambda item: item["metadata"]["creationTimestamp"])
 
-    # -- cross-cluster import / transform (UNVERIFIED - see module docstring) -
-
-    def create_transform_set(self, name: str, from_storage_class: str, to_storage_class: str):
-        raise NotImplementedError(
-            "Confirm TransformSet's real CRD group/kind via "
-            "`kubectl api-resources --api-group=config.kio.kasten.io` on a live "
-            "K10 9.x cluster before implementing this - see module docstring."
+    def restore_from_restore_point(
+        self, restore_point_name: str, restore_profile_name: str, transform_set_name: str,
+        timeout_seconds: int = 1800,
+    ):
+        """Standalone RestoreAction against an imported RestorePoint, applying
+        a TransformSet (e.g. to rewrite the storage class for the target
+        cluster). Returns the final state ("Complete" or "Failed").
+        """
+        restore_action = {
+            "apiVersion": f"{ACTIONS_GROUP}/{ACTIONS_VERSION}",
+            "kind": "RestoreAction",
+            "metadata": {"generateName": "veeamon-tour-restore-", "namespace": NAMESPACE},
+            "spec": {
+                "subject": {
+                    "apiVersion": f"{APPS_GROUP}/{APPS_VERSION}",
+                    "kind": "RestorePoint",
+                    "name": restore_point_name,
+                    "namespace": NAMESPACE,
+                },
+                "profile": {"name": restore_profile_name, "namespace": NAMESPACE},
+                "transforms": [{"transformSetRef": {"name": transform_set_name, "namespace": NAMESPACE}}],
+            },
+        }
+        created = self.custom.create_namespaced_custom_object(
+            ACTIONS_GROUP, ACTIONS_VERSION, NAMESPACE, "restoreactions", restore_action
         )
-
-    def create_import_policy(self, name: str, import_config: str, profile_name: str):
-        raise NotImplementedError(
-            "Confirm ImportPolicy's real CRD group/kind via "
-            "`kubectl api-resources --api-group=config.kio.kasten.io` on a live "
-            "K10 9.x cluster before implementing this - see module docstring."
-        )
-
-    def restore_from_imported_restore_point(self, restore_point_name: str) -> str:
-        raise NotImplementedError(
-            "Confirm the imported RestorePoint object's real CRD group/kind "
-            "(varies by K10 version) before implementing this - trigger the "
-            "restore from the EKS K10 dashboard's Import Policy view for now."
-        )
+        name = created["metadata"]["name"]
+        state, _ = self._wait_for_state(ACTIONS_GROUP, ACTIONS_VERSION, "restoreactions", name, timeout_seconds)
+        return state
