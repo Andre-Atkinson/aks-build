@@ -2,70 +2,76 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
+      version = "~> 4.0"
     }
     random = {
-      source = "hashicorp/random"
+      source  = "hashicorp/random"
+      version = "~> 3.6"
     }
   }
 }
 
+# Auth comes from `az login` (Azure CLI credential chain) - no service principal
+# secrets are created or stored by this build.
 provider "azurerm" {
   features {}
+  subscription_id = var.subscription_id
+}
 
-  client_id       = var.appId
-  client_secret   = var.password
-  tenant_id       = var.tenant
-  subscription_id = var.subscription
+resource "random_id" "suffix" {
+  byte_length = 3
+}
 
+locals {
+  name = "k10dr${random_id.suffix.hex}"
 }
 
 resource "azurerm_resource_group" "default" {
-  name     = "k10demobackup${var.randomNumber}"
-  location = "Australia East"
+  name     = local.name
+  location = var.location
 
   tags = {
-    environment = "Demo"
+    environment = "k10-dr-demo"
   }
 }
 
 resource "azurerm_storage_account" "default" {
-  name                     = "k10demobackup${var.randomNumber}"
+  name                     = local.name
   resource_group_name      = azurerm_resource_group.default.name
   location                 = azurerm_resource_group.default.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
 }
 
+# Shared export/import location for Kasten K10 on both AKS and EKS.
 resource "azurerm_storage_container" "default" {
-  name                  = "k10demobackup${var.randomNumber}"
+  name                  = local.name
   storage_account_name  = azurerm_storage_account.default.name
   container_access_type = "private"
 }
 
 resource "azurerm_kubernetes_cluster" "default" {
-  name                = "k10demobackup${var.randomNumber}"
+  name                = local.name
   location            = azurerm_resource_group.default.location
   resource_group_name = azurerm_resource_group.default.name
-  
-  dns_prefix          = "k10demobackup${var.randomNumber}"
-  kubernetes_version  = 1.31
 
+  dns_prefix         = local.name
+  kubernetes_version = var.kubernetes_version
 
   default_node_pool {
     name            = "default"
-    node_count      = 2
-    vm_size         = "Standard_D2_v2"
+    node_count      = var.node_count
+    vm_size         = var.node_vm_size
     os_disk_size_gb = 30
   }
 
-  service_principal {
-    client_id     = var.appId
-    client_secret = var.password
+  identity {
+    type = "SystemAssigned"
   }
 
   role_based_access_control_enabled = true
 
   tags = {
-    environment = "k10demobackup${var.randomNumber}"
+    environment = "k10-dr-demo"
   }
 }

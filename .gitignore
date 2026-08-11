@@ -41,4 +41,14 @@ launch.json
 
 sp.txt
 randomnumber.txt
-randomnumber.txt
+
+# kubeconfigs written by orchestrator/create.py contain cluster credentials
+.kubeconfigs/
+
+# secrets/config for this demo - see .env.example
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/

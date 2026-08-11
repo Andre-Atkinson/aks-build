@@ -1,1 +1,0 @@
-kubectl exec -n wordpress my-release-mariadb-0 -- /opt/bitnami/mariadb/bin/mariadb -uroot -psecretpassword -e "DROP DATABASE bitnami_wordpress;"

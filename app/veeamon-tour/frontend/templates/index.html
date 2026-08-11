@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>VeeamON Tour</title>
+  <style>
+    body { font-family: -apple-system, Helvetica, Arial, sans-serif; max-width: 780px; margin: 40px auto; padding: 0 16px; color: #1b1b1f; }
+    h1 { color: #00b336; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 32px; }
+    th, td { text-align: left; padding: 8px; border-bottom: 1px solid #ddd; }
+    .count { font-size: 2rem; font-weight: 700; }
+    form { display: flex; flex-direction: column; gap: 8px; max-width: 420px; margin-bottom: 24px; }
+    input, textarea { padding: 8px; font-size: 1rem; }
+    button { padding: 10px; background: #00b336; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    .checkin { border-bottom: 1px solid #eee; padding: 8px 0; }
+  </style>
+</head>
+<body>
+  <h1>VeeamON Tour</h1>
+
+  <h2>Tour Stops</h2>
+  <table>
+    <tr><th>City</th><th>Country</th><th>Date</th><th>Venue</th></tr>
+    {% for s in stops %}
+    <tr><td>{{ s.city }}</td><td>{{ s.country }}</td><td>{{ s.event_date }}</td><td>{{ s.venue }}</td></tr>
+    {% endfor %}
+  </table>
+
+  <h2>Check-ins: <span class="count">{{ count }}</span></h2>
+
+  <form action="/checkin" method="post">
+    <input name="name" placeholder="Your name" required>
+    <input name="city" placeholder="Which stop are you attending?" required>
+    <textarea name="message" placeholder="Say something" required></textarea>
+    <button type="submit">Check in</button>
+  </form>
+
+  <h2>Guestbook</h2>
+  {% for c in checkins %}
+  <div class="checkin">
+    <strong>{{ c.name }}</strong> ({{ c.city }}) &mdash; {{ c.message }}
+    <div><small>{{ c.created_at }}</small></div>
+  </div>
+  {% endfor %}
+</body>
+</html>

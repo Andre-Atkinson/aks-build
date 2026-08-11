@@ -1,0 +1,28 @@
+# Build and push app/veeamon-tour/frontend first, then point this at your registry:
+#   docker build -t <registry>/veeamon-tour:latest app/veeamon-tour/frontend
+#   docker push <registry>/veeamon-tour:latest
+image:
+  repository: ""
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 8080
+
+# auth.rootPassword / auth.password are intentionally omitted so the
+# Bitnami chart auto-generates random passwords and stores them in the
+# <release>-mariadb Secret (keys: mariadb-root-password, mariadb-password) -
+# nothing secret is committed here. Override with --set if you want fixed
+# values, e.g. from $MARIADB_ROOT_PASSWORD / $MARIADB_APP_PASSWORD.
+mariadb:
+  enabled: true
+  auth:
+    database: "veeamon_tour"
+    username: "veeamon"
+  primary:
+    persistence:
+      size: 1Gi
