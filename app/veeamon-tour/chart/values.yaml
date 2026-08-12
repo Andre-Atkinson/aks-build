@@ -4,7 +4,12 @@
 image:
   repository: ""
   tag: "latest"
-  pullPolicy: IfNotPresent
+  # Always, not IfNotPresent: this project rebuilds and pushes the same
+  # :latest tag repeatedly (no immutable digest pin), and IfNotPresent
+  # caused a real failure - a node that already cached an older `latest`
+  # under that name never re-pulled after a newer image was pushed, so it
+  # kept running stale (in one case, wrong-architecture) content.
+  pullPolicy: Always
 
 replicaCount: 1
 

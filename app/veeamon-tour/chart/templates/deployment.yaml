@@ -38,9 +38,15 @@ spec:
             httpGet:
               path: /healthz
               port: 8080
-            initialDelaySeconds: 10
+            # app.py's init_db() retries against the DB for up to ~60s before
+            # Flask even starts listening - give it real headroom rather than
+            # racing the liveness probe into killing the pod mid-retry.
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 6
           livenessProbe:
             httpGet:
               path: /healthz
               port: 8080
-            initialDelaySeconds: 20
+            initialDelaySeconds: 60
+            periodSeconds: 15
