@@ -129,21 +129,31 @@ commands - `create.py` prints whichever applies).
 **Logging into the dashboards:** K10's `auth.tokenAuth.enabled=true` (set in
 both `infra/kasten-azure` and `infra/kasten-aws`) doesn't create any
 credential of its own - it just means the dashboard accepts a real
-Kubernetes ServiceAccount bearer token and delegates to normal RBAC. Create
-one (once per cluster) and paste the token into the login screen:
+Kubernetes ServiceAccount bearer token and delegates to normal RBAC.
+`create.py` now creates that ServiceAccount (`k10-dashboard-admin`, bound to
+`cluster-admin`) and mints a 24h token on both clusters automatically
+(`K10Client.ensure_dashboard_service_account` / `create_dashboard_token` in
+`orchestrator/k10_client.py`), printing both tokens at the end of the run.
+To regenerate a token later without re-running the whole provisioning flow
+(tokens expire after 24h), run:
 
 ```bash
-kubectl create serviceaccount k10-dashboard-admin -n kasten-io --kubeconfig .kubeconfigs/aks.yaml
-kubectl create clusterrolebinding k10-dashboard-admin --clusterrole=cluster-admin \
-  --serviceaccount=kasten-io:k10-dashboard-admin --kubeconfig .kubeconfigs/aks.yaml
-kubectl create token k10-dashboard-admin -n kasten-io --kubeconfig .kubeconfigs/aks.yaml --duration=24h
-# repeat with --kubeconfig .kubeconfigs/eks.yaml for the EKS dashboard
+python3 orchestrator/dashboard_tokens.py --expose-dashboard  # omit the flag if you're using port-forward
 ```
 
-Verified this actually works (not just plausible): an unauthenticated
-request to the dashboard's API redirects to `?page=Login` (`307`); the same
-request with the token passes auth and reaches the backend (`404` for a
-made-up path, not another login redirect).
+A second, easy-to-miss fix lives alongside the token auth: K10 defaults
+`auth.secureCookies` to `true`, which marks its session cookie `Secure`.
+Nothing in this repo terminates TLS in front of K10 (port-forward and the
+optional `gateway-ext` LoadBalancer are both plain HTTP), so browsers
+silently drop that cookie after a successful login - the bearer token itself
+authenticates fine (confirmed via a raw `TokenReview` and direct API calls:
+an unauthenticated request redirects to `?page=Login` with `307`, a request
+with a bad token gets `401`, a request with a valid token reaches the
+backend, `404` for a made-up path), but the *browser session* bounces back
+to the login screen right after. Both `infra/kasten-azure/main.tf` and
+`infra/kasten-aws/main.tf` now set `auth.secureCookies=false` to fix this -
+confirmed end to end in a real browser (login persists across a full page
+reload) on both clusters, not just at the curl/API level.
 
 ```bash
 # 3. Manual: set up the EKS import (K10 dashboards, URLs from create.py's output)

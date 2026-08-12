@@ -48,6 +48,7 @@ class K10Client:
         api_client = kube_config.new_client_from_config(config_file=kube_config_path)
         self.custom = client.CustomObjectsApi(api_client)
         self.core = client.CoreV1Api(api_client)
+        self.rbac = client.RbacAuthorizationV1Api(api_client)
 
     # -- generic CR helpers -------------------------------------------------
 
@@ -77,6 +78,58 @@ class K10Client:
             if exc.status != 404:
                 raise
             return self.custom.create_cluster_custom_object(group, version, plural, body)
+
+    # -- dashboard login -------------------------------------------------------
+
+    def ensure_dashboard_service_account(self, name: str = "k10-dashboard-admin", namespace: str = NAMESPACE):
+        """ServiceAccount + ClusterRoleBinding the K10 dashboard's token-auth
+        login accepts (auth.tokenAuth.enabled delegates to normal RBAC via
+        TokenReview - any authenticated ServiceAccount works, cluster-admin
+        is what the README's manual version used). Idempotent: safe to call
+        on every provisioning run.
+        """
+        try:
+            self.core.create_namespaced_service_account(
+                namespace, client.V1ServiceAccount(metadata=client.V1ObjectMeta(name=name))
+            )
+        except client.exceptions.ApiException as exc:
+            if exc.status != 409:
+                raise
+        try:
+            self.rbac.create_cluster_role_binding(
+                client.V1ClusterRoleBinding(
+                    metadata=client.V1ObjectMeta(name=name),
+                    role_ref=client.V1RoleRef(
+                        api_group="rbac.authorization.k8s.io", kind="ClusterRole", name="cluster-admin"
+                    ),
+                    subjects=[client.RbacV1Subject(kind="ServiceAccount", name=name, namespace=namespace)],
+                )
+            )
+        except client.exceptions.ApiException as exc:
+            if exc.status != 409:
+                raise
+
+    def create_dashboard_token(
+        self,
+        name: str = "k10-dashboard-admin",
+        namespace: str = NAMESPACE,
+        duration_seconds: int = 24 * 60 * 60,
+    ) -> str:
+        """Mint a fresh bearer token for the dashboard ServiceAccount (the
+        TokenRequest API - equivalent of `kubectl create token`). Tokens are
+        short-lived by design; call this again whenever one expires rather
+        than persisting it.
+        """
+        # audiences=[] (not the default None) - the client model's setter
+        # rejects None outright even though the API itself treats an empty/
+        # absent audiences list as "default to the apiserver's own audience",
+        # which is what `kubectl create token` relies on and what the earlier
+        # TokenReview checks against both clusters were validated with.
+        token_request = client.AuthenticationV1TokenRequest(
+            spec=client.V1TokenRequestSpec(audiences=[], expiration_seconds=duration_seconds)
+        )
+        resp = self.core.create_namespaced_service_account_token(name, namespace, token_request)
+        return resp.status.token
 
     def create_ebs_volume_snapshot_class(self, name: str = "csi-ebs-vsc"):
         """VolumeSnapshotClass for ebs.csi.aws.com, annotated for K10.

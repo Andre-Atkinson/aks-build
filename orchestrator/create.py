@@ -128,6 +128,12 @@ def main():
     )
     eks_k10.create_ebs_volume_snapshot_class()
 
+    print("==> Creating dashboard login ServiceAccounts and minting tokens")
+    aks_k10.ensure_dashboard_service_account()
+    eks_k10.ensure_dashboard_service_account()
+    aks_dashboard_token = aks_k10.create_dashboard_token()
+    eks_dashboard_token = eks_k10.create_dashboard_token()
+
     # --- Phase 3: deploy the VeeamON Tour app onto AKS ----------------------
     print("==> Deploying VeeamON Tour app to AKS")
     chart_dir = str(REPO_ROOT / "app" / "veeamon-tour" / "chart")
@@ -146,6 +152,12 @@ def main():
     if os.environ.get("MARIADB_APP_PASSWORD"):
         helm_args += ["--set", f"mariadb.auth.password={os.environ['MARIADB_APP_PASSWORD']}"]
     helm(*helm_args, kubeconfig=aks_kubeconfig)
+
+    print("==> Waiting for the VeeamON Tour app's LoadBalancer IP")
+    # service.type defaults to LoadBalancer (app/veeamon-tour/chart/values.yaml)
+    # unconditionally - unlike the K10 dashboards, this isn't gated behind
+    # --expose-dashboard since the app is the actual demo, not an admin tool.
+    webapp_url = f"http://{cloud.wait_for_loadbalancer_ip(aks_kubeconfig, APP_NAMESPACE, 'veeamon-tour-veeamon-tour')}"
 
     # --- Phase 4: backup + export policy on AKS -----------------------------
     print("==> Creating backup/export policy on AKS and running it once")
@@ -184,7 +196,26 @@ def main():
         f"    Then run orchestrator/failover_demo.py to simulate an AKS failure and\n"
         f"    restore from that RestorePoint (you'll click Restore in the EKS dashboard)."
     )
-    print("\nDone. AKS kubeconfig: %s | EKS kubeconfig: %s" % (aks_kubeconfig, eks_kubeconfig))
+
+    print(
+        f"\n{'=' * 72}\n"
+        f"Demo is ready - everything you need is below.\n"
+        f"{'=' * 72}\n"
+        f"\nK10 dashboard tokens (ServiceAccount k10-dashboard-admin, cluster-admin, 24h -\n"
+        f"paste into the login field, not the URL bar; re-run\n"
+        f"orchestrator/dashboard_tokens.py for a fresh one once these expire):\n"
+        f"  AKS token: {aks_dashboard_token}\n"
+        f"  EKS token: {eks_dashboard_token}\n"
+        f"\nK10 dashboard URLs:\n"
+        f"  AKS: {aks_dashboard_url}\n"
+        f"  EKS: {eks_dashboard_url}\n"
+        f"\nVeeamON Tour app URL:\n"
+        f"  {webapp_url}\n"
+        f"\nKubeconfigs:\n"
+        f"  AKS: {aks_kubeconfig}\n"
+        f"  EKS: {eks_kubeconfig}\n"
+        f"{'=' * 72}"
+    )
 
 
 if __name__ == "__main__":

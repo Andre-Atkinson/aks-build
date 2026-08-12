@@ -74,6 +74,11 @@ resource "helm_release" "k10" {
     name  = "auth.tokenAuth.enabled"
     value = true
   }
+  # See infra/kasten-azure/main.tf's comment - same fix, same reason.
+  set {
+    name  = "auth.secureCookies"
+    value = false
+  }
   set {
     name  = "eula.accept"
     value = true

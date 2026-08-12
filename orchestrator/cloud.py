@@ -45,6 +45,12 @@ def _tf_env(variables: dict | None) -> dict:
     # account keys) don't end up visible in `ps` output.
     env = {**os.environ}
     for key, value in (variables or {}).items():
+        # Terraform's HCL bool parser only accepts lowercase "true"/"false" -
+        # Python's str(True) gives "True", which fails with "a bool is
+        # required; to convert from string, use lowercase true". Confirmed
+        # on a real apply: this broke every TF_VAR_expose_dashboard call.
+        if isinstance(value, bool):
+            value = "true" if value else "false"
         env[f"TF_VAR_{key}"] = str(value)
     return env
 

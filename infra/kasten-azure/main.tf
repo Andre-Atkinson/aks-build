@@ -55,6 +55,18 @@ resource "helm_release" "k10" {
     name  = "auth.tokenAuth.enabled"
     value = true
   }
+  # K10 defaults auth.secureCookies to true, which marks the session cookie
+  # Secure - browsers then silently drop it over plain HTTP. Nothing in this
+  # repo terminates TLS in front of K10 (port-forward or the optional
+  # gateway-ext LoadBalancer are both HTTP), so a valid token still bounces
+  # back to the login screen after "logging in" unless this is false.
+  # Confirmed against a real install: bearer-token auth itself works fine
+  # (verified via TokenReview and direct API calls) - only the browser
+  # session cookie was the problem.
+  set {
+    name  = "auth.secureCookies"
+    value = false
+  }
   set {
     name  = "eula.accept"
     value = true
