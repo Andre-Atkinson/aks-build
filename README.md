@@ -126,6 +126,25 @@ exactly why that step can't be automated, and what URLs to use (real
 LoadBalancer IPs if `EXPOSE_K10_DASHBOARD=true`, otherwise port-forward
 commands - `create.py` prints whichever applies).
 
+**Logging into the dashboards:** K10's `auth.tokenAuth.enabled=true` (set in
+both `infra/kasten-azure` and `infra/kasten-aws`) doesn't create any
+credential of its own - it just means the dashboard accepts a real
+Kubernetes ServiceAccount bearer token and delegates to normal RBAC. Create
+one (once per cluster) and paste the token into the login screen:
+
+```bash
+kubectl create serviceaccount k10-dashboard-admin -n kasten-io --kubeconfig .kubeconfigs/aks.yaml
+kubectl create clusterrolebinding k10-dashboard-admin --clusterrole=cluster-admin \
+  --serviceaccount=kasten-io:k10-dashboard-admin --kubeconfig .kubeconfigs/aks.yaml
+kubectl create token k10-dashboard-admin -n kasten-io --kubeconfig .kubeconfigs/aks.yaml --duration=24h
+# repeat with --kubeconfig .kubeconfigs/eks.yaml for the EKS dashboard
+```
+
+Verified this actually works (not just plausible): an unauthenticated
+request to the dashboard's API redirects to `?page=Login` (`307`); the same
+request with the token passes auth and reaches the backend (`404` for a
+made-up path, not another login redirect).
+
 ```bash
 # 3. Manual: set up the EKS import (K10 dashboards, URLs from create.py's output)
 #    1. On AKS: open the veeamon-tour-backup policy's export action, "Show import details"
