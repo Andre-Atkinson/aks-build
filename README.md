@@ -1,90 +1,107 @@
 # aks-build
 
-Cross-cloud Kasten K10 disaster-recovery demo: AKS + EKS, a small custom
-"VeeamON Tour" two-tier app, backup/export to Azure Blob, cross-cluster
-import with a storage-class transform, a simulated AKS failure, and
-failover to EKS. Optional Cloudflare DNS load balancing on top.
+Cross-cloud Kasten K10 disaster-recovery demo. Provisions an AKS cluster and
+an EKS cluster, installs Kasten K10 on both, deploys a small two-tier demo
+app ("VeeamON Tour") to AKS, backs it up to Azure Blob, imports that backup
+into EKS with a storage-class transform, then simulates an AKS failure and
+walks through restoring onto EKS. An optional Cloudflare DNS load balancer
+can sit on top for a single URL that fails over automatically.
 
-**This provisions real, billed Azure and AWS resources. Nothing runs
-automatically - you invoke each script yourself, and `destroy.py` tears
-everything down again. Review the Terraform plans before applying.**
+> **This provisions real, billed Azure and AWS resources.** Nothing runs on
+> a schedule — you invoke each script yourself, and `destroy.py` tears
+> everything down again. Review the Terraform plans before applying, and
+> destroy promptly after a demo (see [Cost](#cost) and
+> [Lifecycle](#lifecycle)).
 
-Runs on macOS (or Linux/Windows) - no PowerShell, no `Az` module. Auth goes
-through `az login` (Azure) and the standard AWS credential chain
-(`aws configure` / SSO / env vars), not stored service-principal secrets.
+Runs on macOS/Linux/Windows via Python + Terraform + Helm — no PowerShell,
+no `Az` module. Cloud auth comes from your `az login` session and the
+standard AWS credential chain (`aws configure` / SSO / env vars); no
+credentials are stored in this repo.
 
-## If you're picking this up mid-session
+## Contents
 
-Everything below describes the repo in general. If a live environment
-already exists from an earlier run, check before re-running anything:
-
-```bash
-cd infra/azure && terraform output    # cluster/storage details, if it exists
-cd ../aws && terraform output          # same for EKS
-```
-
-If both return real output (not "no state file"), clusters already exist -
-`python orchestrator/create.py` is safe to run again regardless (every step
-is idempotent: Terraform no-ops on unchanged infra, Helm upgrades in place,
-K10 policies get patched not duplicated), but check the "Cross-cluster
-import" section below before assuming the EKS import is done - that part is
-always a manual dashboard step, run once per demo, not something
-`create.py` repeats for you. When genuinely done with the environment, run
-`python orchestrator/destroy.py` - don't leave it running.
+- [Prerequisites](#prerequisites)
+- [Setup](#setup)
+- [Quick start](#quick-start)
+- [Repository layout](#repository-layout)
+- [Configuration reference](#configuration-reference)
+- [Accessing the K10 dashboards](#accessing-the-k10-dashboards)
+- [Cross-cluster import](#cross-cluster-import)
+- [Cost](#cost)
+- [Lifecycle](#lifecycle)
+- [Design notes](#design-notes)
 
 ## Prerequisites
 
-- `terraform` >= 1.7
-- `helm`, `kubectl`
-- `az` CLI (logged in: `az login`) and `aws` CLI (configured: `aws configure`
-  or SSO) - both are also required at runtime by the EKS kubeconfig's exec
-  plugin and by DefaultAzureCredential's CLI fallback
-- Python 3.11+, in a venv:
-  ```bash
-  python3 -m venv .venv
-  source .venv/bin/activate
-  pip install -r orchestrator/requirements.txt
-  ```
-- Docker with `buildx` (for cross-platform builds - see step 1 below), and a
-  container registry you can push to (Docker Hub, ACR, ECR) for the
-  `veeamon-tour` frontend image
-- (Optional) a Cloudflare account with a zone, and `CLOUDFLARE_API_TOKEN` set
+- `terraform` >= 1.7, `helm`, `kubectl`
+- `az` CLI, logged in (`az login`)
+- `aws` CLI, configured (`aws configure` or SSO) — also required at runtime
+  by the EKS kubeconfig's exec plugin
+- Python 3.11+
+- Docker with `buildx`, and a container registry you can push to (Docker
+  Hub, ACR, ECR) for the demo app's image
+- Optional: a Cloudflare account with a zone, if you want the DNS-failover
+  add-on
 
-## Configuration: where secrets/config live
-
-Copy `.env.example` to `.env` and fill it in - `.env` is gitignored, and
-`orchestrator/create.py`/`destroy.py` load it automatically (via
-python-dotenv). This is the **only** place config for this demo lives; there
-is no secrets manager wired up, since the whole point is a cluster you spin
-up, demo, and destroy in one sitting.
+## Setup
 
 ```bash
-cp .env.example .env
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r orchestrator/requirements.txt
+
+cp .env.example .env   # fill in AZURE_SUBSCRIPTION_ID, AWS_REGION, VEEAMON_IMAGE
 ```
 
-What goes where:
-- `AZURE_SUBSCRIPTION_ID`, `AWS_REGION`, `VEEAMON_IMAGE` - read by
-  `create.py`/`destroy.py` as defaults for their `--subscription-id`,
-  `--aws-region`, `--image` flags (CLI flags still override `.env` if you
-  pass them).
-- `EXPOSE_K10_DASHBOARD` - optional, defaults to false (see "Advanced
-  tuning" below for the tradeoff). Set `true` to put a real LoadBalancer in
-  front of each K10 dashboard instead of using `kubectl port-forward`.
-- `MARIADB_ROOT_PASSWORD` / `MARIADB_APP_PASSWORD` - optional. Leave blank
-  and the chart's `templates/mariadb-secret.yaml` auto-generates random
-  passwords, stored only in the in-cluster `veeamon-tour-mariadb` Secret -
-  nothing is committed to `chart/values.yaml`. `failover_demo.py`'s
-  `--mode=corrupt` reads the generated root password straight out of that
-  Secret at runtime.
-- `CLOUDFLARE_API_TOKEN`, `TF_VAR_account_id`, `TF_VAR_zone_id`,
-  `TF_VAR_hostname` - only needed if you apply `infra/cloudflare`.
-  `TF_VAR_aks_ip`/`TF_VAR_eks_ip` aren't in `.env` because they don't exist
-  until the app has a LoadBalancer IP on each cluster - export those right
-  before running `terraform apply` there (see step 6 below).
-- Azure/AWS auth itself is **not** in `.env` - it comes from your `az login`
-  session and `~/.aws/credentials`/SSO, never from a file in this repo.
+`.env` is the only place config lives for this demo — gitignored, loaded
+automatically by every `orchestrator/*.py` script. See
+[Configuration reference](#configuration-reference) for every field.
 
-## Layout
+## Quick start
+
+```bash
+# 1. Build and push the demo app image. --platform matters even on Apple
+#    Silicon: AKS/EKS nodes are x86_64, and a plain `docker build` here
+#    produces an arm64 image that fails with "exec format error" on the
+#    cluster.
+docker buildx build --platform linux/amd64 -t <registry>/veeamon-tour:latest \
+  --push app/veeamon-tour/frontend
+
+# 2. Provision both clusters, install K10, deploy the app, and run a backup.
+#    Every step is idempotent - safe to re-run.
+python orchestrator/create.py
+```
+
+`create.py` finishes by printing everything you need: K10 dashboard URLs
+and login tokens for both clusters, the demo app's URL, and the two
+kubeconfig paths. It also prints the one manual step needed next — see
+[Cross-cluster import](#cross-cluster-import) — because that step genuinely
+can't be automated (K10 requires it to happen through the dashboard).
+
+```bash
+# 3. Manual: set up the EKS import (see "Cross-cluster import" below)
+
+# 4. Record the demo: simulate an AKS failure, then click Restore in the
+#    EKS K10 dashboard yourself (on camera). This script captures the
+#    baseline count, breaks AKS, tells you what to restore, and polls until
+#    EKS matches.
+python orchestrator/failover_demo.py \
+  --aks-url http://<aks-app-ip> --eks-url http://<eks-app-ip>
+
+# 5. (Optional) Cloudflare failover DNS - apply once you have both app IPs
+export TF_VAR_aks_ip=<aks-app-ip>
+export TF_VAR_eks_ip=<eks-app-ip>
+cd infra/cloudflare && terraform init && terraform apply && cd ../..
+
+# 6. Tear everything down right after recording.
+python orchestrator/destroy.py
+```
+
+`--aks-app-ip` / `--eks-app-ip` are the demo app's own LoadBalancer IPs
+(printed by `create.py`, or re-fetch with `kubectl get svc
+veeamon-tour-veeamon-tour -n veeamon-tour`) — not the K10 dashboard IPs.
+
+## Repository layout
 
 ```
 infra/azure/         AKS cluster + Azure Storage account/container
@@ -97,224 +114,207 @@ orchestrator/        Python scripts that sequence all of the above
   cloud.py             Azure/AWS SDK helpers (kubeconfig writing, Terraform wrappers)
   k10_client.py        K10 CRD helpers (Policy/Profile/TransformSet/RunAction/RestoreAction)
   create.py            Provisions everything, deploys the app, runs the AKS backup+export
+  dashboard_tokens.py  Re-applies the K10 login fix / mints fresh tokens without a full re-run
   failover_demo.py     Simulates an AKS failure, waits for your manual EKS restore
   destroy.py           Tears down everything create.py built, in reverse order
 ```
 
-## Run order
+## Configuration reference
+
+Everything in `.env` (copy from `.env.example`):
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `AZURE_SUBSCRIPTION_ID` | Yes | Default for `create.py`/`destroy.py --subscription-id` |
+| `AWS_REGION` | Yes | Default for `--aws-region` (default `ap-southeast-2`) |
+| `VEEAMON_IMAGE` | Yes | Registry path for the image built in step 1 |
+| `EXPOSE_K10_DASHBOARD` | No | `true` puts a real LoadBalancer in front of each K10 dashboard instead of `kubectl port-forward`. Defaults `false` — see [Design notes](#design-notes) for the tradeoff. |
+| `MARIADB_ROOT_PASSWORD` / `MARIADB_APP_PASSWORD` | No | Leave blank to auto-generate (stored only in the in-cluster `veeamon-tour-mariadb` Secret, never written to disk) |
+| `CLOUDFLARE_API_TOKEN`, `TF_VAR_account_id`, `TF_VAR_zone_id`, `TF_VAR_hostname` | Only for `infra/cloudflare` | DNS failover add-on config |
+
+Not in `.env`:
+- Azure/AWS credentials — come from `az login` and your AWS credential
+  chain, never from a file in this repo.
+- `TF_VAR_aks_ip` / `TF_VAR_eks_ip` — the demo app doesn't have a
+  LoadBalancer IP until after `create.py` runs, so export these by hand
+  right before applying `infra/cloudflare` (step 5 in
+  [Quick start](#quick-start)).
+- Node size/count, Kubernetes version, Azure region, K10 chart version —
+  each has a sensible default in its own module's `variables.tf`
+  (`infra/azure`, `infra/aws`, `infra/kasten-azure`, `infra/kasten-aws`) or
+  the app's `chart/values.yaml`. Override with Terraform's `-var` / a
+  gitignored `terraform.tfvars`, or Helm's `--set`, rather than adding a new
+  `.env` field — these describe the infrastructure's shape, not how you
+  personally want to interact with a given run.
+
+## Accessing the K10 dashboards
+
+K10's `auth.tokenAuth.enabled=true` (set in both `infra/kasten-azure` and
+`infra/kasten-aws`) means the dashboard accepts a Kubernetes ServiceAccount
+bearer token and delegates to normal RBAC — no separate K10 credential
+exists. `create.py` creates that ServiceAccount (`k10-dashboard-admin`,
+bound to `cluster-admin`) and mints a 24h token on both clusters
+automatically, printing both at the end of the run.
+
+Tokens expire after 24h. To get fresh ones without re-running the whole
+provisioning flow:
 
 ```bash
-# 1. Build and push the app image - use --platform even on Apple Silicon,
-#    AKS/EKS nodes are x86_64 and a plain `docker build` here produces an
-#    arm64 image that fails with "exec format error" on the cluster (hit on
-#    a real run)
-docker buildx build --platform linux/amd64 -t <registry>/veeamon-tour:latest \
-  --push app/veeamon-tour/frontend
+python orchestrator/dashboard_tokens.py --expose-dashboard  # omit the flag if you're using port-forward
 ```
 
-```bash
-# 2. Fill in .env (see above), then provision both clusters, install K10,
-#    deploy the app, and take a backup
-source .venv/bin/activate
-python orchestrator/create.py
-```
+Paste the token into the dashboard's login field — not the URL bar.
 
-`create.py` runs the AKS backup+export itself (verified working against a
-real cluster) and creates the EKS-side storage-class transform, then prints
-the exact manual step needed next - see "Cross-cluster import" below for
-exactly why that step can't be automated, and what URLs to use (real
-LoadBalancer IPs if `EXPOSE_K10_DASHBOARD=true`, otherwise port-forward
-commands - `create.py` prints whichever applies).
+## Cross-cluster import
 
-**Logging into the dashboards:** K10's `auth.tokenAuth.enabled=true` (set in
-both `infra/kasten-azure` and `infra/kasten-aws`) doesn't create any
-credential of its own - it just means the dashboard accepts a real
-Kubernetes ServiceAccount bearer token and delegates to normal RBAC.
-`create.py` now creates that ServiceAccount (`k10-dashboard-admin`, bound to
-`cluster-admin`) and mints a 24h token on both clusters automatically
-(`K10Client.ensure_dashboard_service_account` / `create_dashboard_token` in
-`orchestrator/k10_client.py`), printing both tokens at the end of the run.
-To regenerate a token later without re-running the whole provisioning flow
-(tokens expire after 24h), run:
+`orchestrator/k10_client.py` drives K10 through its Kubernetes CRDs
+(`Policy`, `Profile`, `TransformSet`, `RunAction`, `RestoreAction`), not the
+dashboard's internal HTTP API. `create.py` automates everything up to the
+point of import — the AKS backup+export policy, running it, and the EKS
+storage-class transform — then stops, because K10's cross-cluster pairing
+value (`receiveString`) is a cryptographic envelope generated on the export
+side with no CRD field or API call that exposes it independently. It's
+only available via the dashboard's **"Show import details"** action, so
+that one step has to be done by hand:
 
-```bash
-python3 orchestrator/dashboard_tokens.py --expose-dashboard  # omit the flag if you're using port-forward
-```
+1. On the **AKS** dashboard: open the `veeamon-tour-backup` policy's export
+   action, click **Show import details**.
+2. On the **EKS** dashboard: create an Import Policy against the
+   `azureblob` profile, paste that import configuration in, apply the
+   `azure-to-ebs-storage-class` transform, and run it once.
 
-A second, easy-to-miss fix lives alongside the token auth: K10 defaults
-`auth.secureCookies` to `true`, which marks its session cookie `Secure`.
-Nothing in this repo terminates TLS in front of K10 (port-forward and the
-optional `gateway-ext` LoadBalancer are both plain HTTP), so browsers
-silently drop that cookie after a successful login - the bearer token itself
-authenticates fine (confirmed via a raw `TokenReview` and direct API calls:
-an unauthenticated request redirects to `?page=Login` with `307`, a request
-with a bad token gets `401`, a request with a valid token reaches the
-backend, `404` for a made-up path), but the *browser session* bounces back
-to the login screen right after. Both `infra/kasten-azure/main.tf` and
-`infra/kasten-aws/main.tf` now set `auth.secureCookies=false` to fix this -
-confirmed end to end in a real browser (login persists across a full page
-reload) on both clusters, not just at the curl/API level.
+Once the Import Policy exists with the real value, everything else — the
+transform, the restore, `failover_demo.py`'s polling — works as described
+in [Quick start](#quick-start).
 
-```bash
-# 3. Manual: set up the EKS import (K10 dashboards, URLs from create.py's output)
-#    1. On AKS: open the veeamon-tour-backup policy's export action, "Show import details"
-#    2. On EKS: create an Import Policy against the "azureblob" profile, paste that in,
-#       apply the "azure-to-ebs-storage-class" transform, run it once
-```
+## Cost
 
-```bash
-# 4. Get each cluster's app IP for the demo/failover step
-kubectl --kubeconfig .kubeconfigs/aks.yaml -n veeamon-tour get svc veeamon-tour-veeamon-tour
-kubectl --kubeconfig .kubeconfigs/eks.yaml -n veeamon-tour get svc veeamon-tour-veeamon-tour
-```
-
-```bash
-# 5. Record the demo: simulate an AKS failure, then click Restore in the
-#    EKS K10 dashboard yourself (on camera) - this script captures the
-#    baseline count, breaks AKS, tells you what to restore, and polls
-#    until EKS matches
-python orchestrator/failover_demo.py \
-  --aks-url http://<aks-service-ip> \
-  --eks-url http://<eks-service-ip>
-```
-
-```bash
-# 6. (Optional) Cloudflare failover DNS - apply once you have both IPs
-export TF_VAR_aks_ip=<aks-service-ip>
-export TF_VAR_eks_ip=<eks-service-ip>
-cd infra/cloudflare && terraform init && terraform apply
-```
-
-```bash
-# 7. Tear everything down right after recording - see "Keep it short-lived"
-python orchestrator/destroy.py
-```
-
-## Keep it short-lived
-
-This is sized for "spin up, record a demo, spin down" - not a long-running
-environment:
-
-- Node pools default to burstable, small SKUs (`Standard_B2ms` on AKS,
-  `t3.large` on EKS) at 2 nodes each - enough for K10 + the app + MariaDB,
-  not tuned for anything beyond that.
-- Destroy right after recording: run step 7 above (or at minimum
-  `python orchestrator/destroy.py`) as soon as you're done. Nothing here
-  auto-expires or auto-shuts-down.
-- If you only want to check what would change before destroying,
-  `terraform plan -destroy` in each `infra/*` directory shows it without
-  applying.
-
-### Exactly what gets created, and roughly what it costs
-
-Every billable resource `create.py` provisions (plus the ones that don't
-cost anything, for completeness). USD, `ap-southeast-2` / `Australia East`
-list pricing as of this writing - **not** pulled from a live pricing API,
-so treat these as rough, and check the
+USD, `ap-southeast-2` / `Australia East` list pricing as of this writing —
+**not** pulled from a live pricing API, so treat these as rough. Check the
 [Azure](https://azure.microsoft.com/en-us/pricing/calculator/) /
-[AWS](https://calculator.aws/) pricing calculators for anything precise.
-Prices also drift over time and by region.
+[AWS](https://calculator.aws/) calculators for anything precise; prices
+drift by region and over time.
 
 **Azure** (`infra/azure`, `infra/kasten-azure`)
 
-| Resource | Purpose | Approx. cost while running |
-|---|---|---|
-| AKS cluster control plane | Kubernetes API/control plane | $0/hr (Free tier - default, no SLA) |
-| 2x `Standard_B2ms` nodes | AKS worker nodes | ~$0.08-0.10/hr each, ~$0.16-0.20/hr total |
-| Storage account + blob container (Standard LRS) | Shared K10 export/import location | ~$0.01/hr or less at this scale |
-| MariaDB PVC (1Gi Azure Disk) | App database volume | <$0.01/hr |
-| Resource group, K10 Helm release, Policies/Profiles/StorageClasses | Container/config objects | $0 - no direct cost |
-| `gateway-ext` Standard Load Balancer (only if `EXPOSE_K10_DASHBOARD=true`) | Public access to the K10 dashboard | ~$0.025/hr |
+| Resource | Approx. cost while running |
+|---|---|
+| AKS control plane | $0/hr (Free tier) |
+| 2x `Standard_B2ms` nodes | ~$0.16–0.20/hr |
+| Storage account + blob container | ~$0.01/hr or less |
+| MariaDB PVC (1Gi Azure Disk) | <$0.01/hr |
+| `gateway-ext` LoadBalancer (only if `EXPOSE_K10_DASHBOARD=true`) | ~$0.025/hr |
+| Resource group, K10 release, Policies/Profiles/StorageClasses | $0 |
 
 **AWS** (`infra/aws`, `infra/kasten-aws`)
 
-| Resource | Purpose | Approx. cost while running |
-|---|---|---|
-| EKS cluster control plane | Kubernetes API/control plane | $0.10/hr flat (fixed, not reducible) |
-| 2x `t3.large` nodes | EKS worker nodes | ~$0.08-0.10/hr each, ~$0.16-0.20/hr total |
-| 1x NAT Gateway | Outbound internet for private subnets | ~$0.045/hr + data processing (negligible for this workload) |
-| EBS root volumes (2x ~20GB gp3) | Node OS disks | ~$0.005/hr |
-| MariaDB PVC (1Gi EBS, after restore) | App database volume, post-failover | <$0.01/hr |
-| VPC/subnets/route tables, IAM role, EKS addons, K10 Helm release, snapshot-controller, Policies/Profiles/StorageClasses | Networking/config objects | $0 - no direct cost |
-| `gateway-ext` Classic Load Balancer (only if `EXPOSE_K10_DASHBOARD=true`) | Public access to the K10 dashboard | ~$0.025/hr + negligible data transfer |
+| Resource | Approx. cost while running |
+|---|---|
+| EKS control plane | $0.10/hr flat |
+| 2x `t3.large` nodes | ~$0.16–0.20/hr |
+| 1x NAT Gateway | ~$0.045/hr + negligible data processing |
+| EBS root volumes (2x ~20GB gp3) | ~$0.005/hr |
+| MariaDB PVC (1Gi EBS, post-restore) | <$0.01/hr |
+| `gateway-ext` LoadBalancer (only if `EXPOSE_K10_DASHBOARD=true`) | ~$0.025/hr + negligible data transfer |
+| VPC, IAM, EKS addons, K10 release, snapshot-controller, Policies/Profiles/StorageClasses | $0 |
 
-**Rough total while both clusters are up: ~$0.45-0.60/hr combined**, or
-~$0.50-0.65/hr with both dashboard LoadBalancers enabled.
+**Rough total while both clusters are up: ~$0.45–0.60/hr**, or
+~$0.50–0.65/hr with both dashboard LoadBalancers enabled.
 
 **Not included above:** `infra/cloudflare` needs Cloudflare's **Load
-Balancing add-on - $5/month recurring**, not a per-hour cost like everything
-else here, and not prorated down when you tear the rest of this down (2
-endpoints included, 500K free queries/month, $0.50/500K after that). It's
-cosmetic on top of the actual DR story (`failover_demo.py` already proves
-the backup/restore mechanics by hitting AKS/EKS IPs directly) - skip it
-unless you specifically want a single DNS name that flips automatically for
-the recording. It's also not part of the default `create.py` run either
-way.
+Balancing add-on — $5/month recurring**, not per-hour, and not prorated
+down when you tear the rest of this down (2 endpoints included, 500K free
+queries/month, $0.50/500K after). It's cosmetic on top of the actual DR
+story — `failover_demo.py` already proves the backup/restore mechanics by
+hitting AKS/EKS IPs directly — so skip it unless you specifically want one
+DNS name that flips automatically for the recording. It's not part of the
+default `create.py` run either way.
 
-## Advanced tuning
+## Lifecycle
 
-`.env` holds the values with no safe default (subscription/account
-identity, image path, secret overrides) plus a couple of behavioral toggles
-for `create.py` itself (`EXPOSE_K10_DASHBOARD`) that don't belong in
-Terraform defaults because they're about how *you* want to interact with a
-given run, not the infrastructure's shape. Everything else - node
-size/count, Kubernetes version, Azure region/location, K10 chart version -
-has a sensible default and lives in each module's own `variables.tf`
-(`infra/azure`, `infra/aws`, `infra/kasten-azure`, `infra/kasten-aws`) or the
-app's `chart/values.yaml`. To change one of those, either edit the
-`default = ...` there, or override per-run with Terraform's own mechanism
-(`-var`, or a gitignored `terraform.tfvars` in that directory) / `helm
---set`, rather than adding it to `.env`.
+This is sized for "spin up, record a demo, spin down," not a long-running
+environment — nothing here auto-expires.
 
-**Why `EXPOSE_K10_DASHBOARD` defaults to false:** a `LoadBalancer` Service
-puts K10's login page on the public internet; port-forward tunnels through
-the Kubernetes API server instead, gated by whoever already has your
-kubeconfig. For a cluster that only exists for a few hours and only you need
-to reach, port-forward is the safer default. The real cost either way is
-small (~$0.05/hr combined for both dashboards, see the cost table above) -
-set it true if you're doing an extended interactive session across both
-dashboards and don't want a foreground `kubectl port-forward` process to be
-a single point of failure mid-recording.
+- Node pools default to small, burstable SKUs (2 nodes each) — enough for
+  K10 + the app + MariaDB, not tuned beyond that.
+- Destroy right after recording: `python orchestrator/destroy.py`.
+- To preview a teardown without applying it, run `terraform plan -destroy`
+  in any `infra/*` directory.
+- `destroy.py --skip-cloudflare` if `infra/cloudflare` was never applied
+  (otherwise it'll try to destroy a module with no state, harmlessly, but
+  it's an extra `terraform init` for nothing).
+- After destroying, `.kubeconfigs/*.yaml` and every `infra/*/terraform.tfstate*`
+  are stale/empty — safe to delete; `create.py` regenerates them from
+  scratch on the next run.
 
-## Cross-cluster import: what's automated vs. manual
+Not sure whether an environment from an earlier run is still up? Check for
+live Terraform state before running anything:
 
-`orchestrator/k10_client.py` drives K10 through its Kubernetes CRDs
-(Policy, Profile, TransformSet, RunAction, RestoreAction) rather than the
-dashboard's internal HTTP API. There is no `ImportPolicy` or generic
-`ActionSet` kind - cross-cluster import is `action: import` on the same
-`Policy` kind used for backup/export, triggered via `RunAction`. This
-schema, and the AKS-side backup+export flow specifically, are verified
-against real clusters end-to-end, not just plausible from reading docs -
-`create.py`'s backup+export policy has actually completed successfully.
+```bash
+cd infra/azure && terraform output    # cluster/storage details, if state exists
+cd ../aws && terraform output          # same for EKS
+```
 
-**The EKS-side import setup is a manual step, confirmed necessary, not just
-unverified.** The `receiveString` field looked from the schema alone like a
-shared passphrase you could generate yourself and set identically on both
-sides. It isn't: supplying an arbitrary string on the import side fails
-with `cipher: message authentication failed` - it's a cryptographic
-envelope K10 generates on the export side, and the auto-created
-`<policy>-<hash>-migration-token` Secret on the export cluster turns out to
-be a different thing (a per-export data-encryption key, not the
-cross-cluster pairing token). There's no CRD field or API call found that
-produces the real value independently of the dashboard's "Show import
-details" action on the export policy - so that one step has to be done by
-hand. Once the Import Policy exists with the real value, the transform and
-restore steps work exactly as described above.
+If both return real output, the clusters already exist — `create.py` is
+safe to run again regardless, since every step is idempotent (Terraform
+no-ops on unchanged infra, Helm upgrades in place, K10 policies get patched
+not duplicated). The one exception is
+[cross-cluster import](#cross-cluster-import): that's always a manual
+dashboard step, so re-running `create.py` won't tell you whether it's
+already been done.
 
-## Notes
+## Design notes
 
-- Kasten K10 version is pinned in `orchestrator/create.py` (`K10_VERSION`) -
-  check `helm search repo kasten/k10` for the current release before relying
-  on the pin; it moves roughly monthly. Same for AKS/EKS Kubernetes versions
-  in `infra/azure`/`infra/aws`'s `variables.tf` - both clouds retire standard
-  support for old minor versions on their own schedule (hit on a real run:
-  the pinned AKS version had aged into LTS-only within months of being set).
+Decisions and bugs worth knowing about if you're modifying this repo:
+
+- **K10 dashboard login was silently broken over plain HTTP.** K10 defaults
+  `auth.secureCookies` to `true`, marking its session cookie `Secure`.
+  Nothing here terminates TLS in front of K10 (port-forward and the
+  optional `gateway-ext` LoadBalancer are both plain HTTP), so browsers
+  dropped that cookie right after a successful login and bounced back to
+  the sign-in screen — even though the bearer token itself authenticated
+  fine (confirmed via a raw `TokenReview` and direct API calls). Both
+  `infra/kasten-azure/main.tf` and `infra/kasten-aws/main.tf` now set
+  `auth.secureCookies=false`; confirmed end to end in a real browser
+  (login persists across a full page reload) on both clusters.
+- **`receiveString` is not a shared passphrase.** It looked from the K10
+  CRD schema like something you could generate yourself and set
+  identically on both sides. It isn't — an arbitrary string on the import
+  side fails with `cipher: message authentication failed`. It's a
+  cryptographic envelope K10 generates on the export side; the
+  auto-created `<policy>-<hash>-migration-token` Secret is a different
+  thing (a per-export data-encryption key, not the pairing token). There's
+  no CRD field or API call that exposes the real value outside the
+  dashboard's "Show import details" action, which is why that step is
+  manual — see [Cross-cluster import](#cross-cluster-import).
+- **Why `EXPOSE_K10_DASHBOARD` defaults to `false`.** A `LoadBalancer`
+  Service puts K10's login page on the public internet; port-forward
+  tunnels through the Kubernetes API server, gated by whoever already has
+  your kubeconfig. For a cluster that exists for a few hours and only you
+  need to reach, port-forward is the safer default. Set it `true` if you
+  want both dashboards reachable without a foreground `kubectl
+  port-forward` process being a single point of failure mid-recording.
+- **EKS doesn't ship snapshot CRDs/CSI defaults the way AKS does** —
+  `infra/aws` installs the `piraeus.io` `snapshot-controller` chart and
+  sets a default `ebs-gp3` StorageClass explicitly; AKS gets both for free.
+- **Terraform's `kubernetes_manifest` validates CRD schemas at plan time**,
+  before anything in the *same* apply has run — so the K10 `Profile`/
+  `VolumeSnapshotClass` objects that depend on CRDs the same apply installs
+  can't go through that resource type. They're created directly via the
+  Kubernetes Python client in `orchestrator/k10_client.py` instead.
+- **The demo app's MariaDB is a self-authored StatefulSet**, not a Bitnami
+  chart dependency — Bitnami prunes old image tags on a schedule outside
+  this repo's control, which broke an earlier build.
+- **Image pull policy is `Always`**, not `IfNotPresent` — this project
+  rebuilds and pushes the same `:latest` tag repeatedly with no immutable
+  digest, and a node that already cached an older `:latest` never re-pulled
+  after a newer image was pushed (in one case, the wrong architecture).
+- **Version pins age out.** Kasten K10's version is pinned in
+  `orchestrator/create.py` (`K10_VERSION`) and moves roughly monthly — check
+  `helm search repo kasten/k10` before relying on it. Same for the AKS/EKS
+  Kubernetes version pins in `infra/azure`/`infra/aws`'s `variables.tf`;
+  both clouds retire standard support for old minor versions on their own
+  schedule.
 - The demo app's data model is a live check-in counter + guestbook
-  (`app/veeamon-tour/frontend/app.py`), seeded with placeholder VeeamON Tour
-  city stops - not the real tour schedule. The database is a self-authored
-  MariaDB StatefulSet on the official `mariadb` image
-  (`app/veeamon-tour/chart/templates/mariadb-*.yaml`), not a Bitnami chart
-  dependency - Bitnami prunes old image tags on a schedule outside this
-  repo's control, which broke the original Bitnami-based build.
-- `infra/cloudflare` is optional and independent of the rest - apply it once
-  both clusters' app Services have external IPs.
+  (`app/veeamon-tour/frontend/app.py`), seeded with placeholder city stops
+  — not a real tour schedule.
