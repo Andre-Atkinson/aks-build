@@ -51,6 +51,14 @@ def main():
         required="VEEAMON_IMAGE" not in os.environ,
         help="Registry path for the veeamon-tour frontend image (or set VEEAMON_IMAGE in .env)",
     )
+    parser.add_argument(
+        "--expose-dashboard",
+        action="store_true",
+        default=os.environ.get("EXPOSE_K10_DASHBOARD", "").lower() in ("1", "true", "yes"),
+        help="Put a LoadBalancer Service (gateway-ext) in front of each K10 dashboard "
+        "instead of requiring kubectl port-forward. Costs ~$0.05/hr combined "
+        "(Azure Standard LB + AWS Classic LB) - or set EXPOSE_K10_DASHBOARD=true in .env.",
+    )
     args = parser.parse_args()
 
     KUBECONFIG_DIR.mkdir(exist_ok=True)
@@ -81,13 +89,28 @@ def main():
     print("==> Installing Kasten K10 on AKS")
     cloud.terraform_apply(
         str(INFRA / "kasten-azure"),
-        variables={"kube_config_path": aks_kubeconfig, "k10_version": K10_VERSION},
+        variables={
+            "kube_config_path": aks_kubeconfig,
+            "k10_version": K10_VERSION,
+            "expose_dashboard": args.expose_dashboard,
+        },
     )
     print("==> Installing Kasten K10 on EKS")
     cloud.terraform_apply(
         str(INFRA / "kasten-aws"),
-        variables={"kube_config_path": eks_kubeconfig, "k10_version": K10_VERSION},
+        variables={
+            "kube_config_path": eks_kubeconfig,
+            "k10_version": K10_VERSION,
+            "expose_dashboard": args.expose_dashboard,
+        },
     )
+
+    if args.expose_dashboard:
+        print("==> Waiting for K10 dashboard LoadBalancer IPs")
+        aks_dashboard_ip = wait_for_loadbalancer_ip(aks_kubeconfig, "kasten-io", "gateway-ext")
+        eks_dashboard_ip = wait_for_loadbalancer_ip(eks_kubeconfig, "kasten-io", "gateway-ext")
+        print(f"    AKS dashboard: http://{aks_dashboard_ip}/k10/")
+        print(f"    EKS dashboard: http://{eks_dashboard_ip}/k10/")
 
     # Profile/Secret (and, on EKS, the VolumeSnapshotClass) are created here
     # via the Kubernetes API directly rather than Terraform's

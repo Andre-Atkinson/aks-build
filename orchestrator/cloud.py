@@ -19,12 +19,14 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import boto3
 from azure.identity import DefaultAzureCredential
 from azure.mgmt.containerservice import ContainerServiceClient
 from azure.mgmt.storage import StorageManagementClient
+from kubernetes import client as k8s_client, config as k8s_config
 
 
 def terraform_output(directory: str) -> dict:
@@ -121,3 +123,22 @@ def write_eks_kubeconfig(region: str, cluster_name: str, out_path: str) -> str:
 
     Path(out_path).write_text(yaml.safe_dump(kubeconfig))
     return out_path
+
+
+def wait_for_loadbalancer_ip(
+    kube_config_path: str, namespace: str, service_name: str, timeout_seconds: int = 300
+) -> str:
+    """Poll a Service until the cloud provider assigns it an external IP
+    (or hostname, for AWS's Classic Load Balancer - which vends a DNS name,
+    not a raw IP).
+    """
+    api_client = k8s_config.new_client_from_config(config_file=kube_config_path)
+    core = k8s_client.CoreV1Api(api_client)
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        svc = core.read_namespaced_service(service_name, namespace)
+        ingress = (svc.status.load_balancer.ingress or [None])[0] if svc.status.load_balancer else None
+        if ingress and (ingress.ip or ingress.hostname):
+            return ingress.ip or ingress.hostname
+        time.sleep(10)
+    raise TimeoutError(f"{service_name}/{namespace} had no LoadBalancer IP after {timeout_seconds}s")
