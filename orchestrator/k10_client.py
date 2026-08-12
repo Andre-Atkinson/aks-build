@@ -167,7 +167,7 @@ class K10Client:
         app_namespace: str,
         backup_profile_name: str,
         export_profile_name: str,
-        receive_string: str,
+        receive_string: str = "",
         schedule: str = "@daily",
     ):
         """Policy with separate backup and export actions (each action kind
@@ -175,10 +175,19 @@ class K10Client:
         with both backupParameters and exportParameters, which the original
         version of this file used, is not how K10 structures it).
 
-        `receive_string` is a shared secret you choose - the matching
-        Policy's importParameters.receiveString on the destination cluster
-        must use the same value to pair with this export.
+        `receive_string` is NOT a shared passphrase you can invent - it's a
+        cryptographic envelope K10 generates on the export side. Confirmed
+        on a real run: supplying an arbitrary string on the import side
+        fails with "cipher: message authentication failed". Leave this
+        unset and get the real value from the dashboard's "Show import
+        details" action on this policy's export instead.
         """
+        export_parameters = {
+            "exportData": {"enabled": True},
+            "profile": {"name": export_profile_name, "namespace": NAMESPACE},
+        }
+        if receive_string:
+            export_parameters["receiveString"] = receive_string
         policy = {
             "apiVersion": f"{CONFIG_GROUP}/{CONFIG_VERSION}",
             "kind": "Policy",
@@ -202,11 +211,7 @@ class K10Client:
                     },
                     {
                         "action": "export",
-                        "exportParameters": {
-                            "exportData": {"enabled": True},
-                            "profile": {"name": export_profile_name, "namespace": NAMESPACE},
-                            "receiveString": receive_string,
-                        },
+                        "exportParameters": export_parameters,
                     },
                 ],
             },
@@ -217,8 +222,14 @@ class K10Client:
         self, name: str, import_profile_name: str, receive_string: str, schedule: str = "@daily"
     ):
         """Policy with an import action - the destination-cluster counterpart
-        to create_backup_export_policy. `receive_string` must match the
-        source policy's exportParameters.receiveString.
+        to create_backup_export_policy.
+
+        `receive_string` must be the real value from the source policy's
+        export action - "Show import details" in the K10 dashboard - not an
+        arbitrary string. Not called anywhere in this repo's own scripts
+        (see create.py's Phase 5), since there's no confirmed way to obtain
+        that real value without the dashboard; kept here for scripting the
+        rest of the setup once you've copied it out yourself.
         """
         policy = {
             "apiVersion": f"{CONFIG_GROUP}/{CONFIG_VERSION}",

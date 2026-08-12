@@ -85,32 +85,45 @@ source .venv/bin/activate
 python orchestrator/create.py
 ```
 
-`create.py` runs the AKS backup+export and the EKS import+transform itself -
-see "Cross-cluster import" below for what's actually verified there.
+`create.py` runs the AKS backup+export itself (verified working against a
+real cluster) and creates the EKS-side storage-class transform, then prints
+instructions for the one manual step - see "Cross-cluster import" below for
+exactly why that step can't be automated.
 
 ```bash
-# 3. Get each cluster's app IP for the demo/failover step
+# 3. Manual: set up the EKS import (K10 dashboard on both clusters)
+kubectl --kubeconfig .kubeconfigs/aks.yaml port-forward -n kasten-io svc/gateway 8080:80
+#   -> open the veeamon-tour-backup policy's export action, "Show import details"
+kubectl --kubeconfig .kubeconfigs/eks.yaml port-forward -n kasten-io svc/gateway 8081:80
+#   -> create an Import Policy against the "azureblob" profile, paste that in,
+#      apply the "azure-to-ebs-storage-class" transform, run it once
+```
+
+```bash
+# 4. Get each cluster's app IP for the demo/failover step
 kubectl --kubeconfig .kubeconfigs/aks.yaml -n veeamon-tour get svc veeamon-tour-veeamon-tour
 kubectl --kubeconfig .kubeconfigs/eks.yaml -n veeamon-tour get svc veeamon-tour-veeamon-tour
 ```
 
 ```bash
-# 4. Record the demo: simulate an AKS failure, confirm EKS takes over with
-#    matching guestbook data
+# 5. Record the demo: simulate an AKS failure, then click Restore in the
+#    EKS K10 dashboard yourself (on camera) - this script captures the
+#    baseline count, breaks AKS, tells you what to restore, and polls
+#    until EKS matches
 python orchestrator/failover_demo.py \
   --aks-url http://<aks-service-ip> \
   --eks-url http://<eks-service-ip>
 ```
 
 ```bash
-# 5. (Optional) Cloudflare failover DNS - apply once you have both IPs
+# 6. (Optional) Cloudflare failover DNS - apply once you have both IPs
 export TF_VAR_aks_ip=<aks-service-ip>
 export TF_VAR_eks_ip=<eks-service-ip>
 cd infra/cloudflare && terraform init && terraform apply
 ```
 
 ```bash
-# 6. Tear everything down right after recording - see "Keep it short-lived"
+# 7. Tear everything down right after recording - see "Keep it short-lived"
 python orchestrator/destroy.py
 ```
 
@@ -122,7 +135,7 @@ environment:
 - Node pools default to burstable, small SKUs (`Standard_B2ms` on AKS,
   `t3.large` on EKS) at 2 nodes each - enough for K10 + the app + MariaDB,
   not tuned for anything beyond that.
-- Destroy right after recording: run step 6 above (or at minimum
+- Destroy right after recording: run step 7 above (or at minimum
   `python orchestrator/destroy.py`) as soon as you're done. Nothing here
   auto-expires or auto-shuts-down.
 - If you only want to check what would change before destroying,
@@ -185,34 +198,32 @@ app's `chart/values.yaml`. To change one of those, either edit the
 (`-var`, or a gitignored `terraform.tfvars` in that directory) / `helm
 --set`, rather than adding it to `.env`.
 
-## Cross-cluster import: what's verified vs. still assumed
+## Cross-cluster import: what's automated vs. manual
 
-`orchestrator/k10_client.py` drives K10 entirely through its Kubernetes CRDs
+`orchestrator/k10_client.py` drives K10 through its Kubernetes CRDs
 (Policy, Profile, TransformSet, RunAction, RestoreAction) rather than the
 dashboard's internal HTTP API. There is no `ImportPolicy` or generic
-`ActionSet` kind (an earlier version of this file assumed both, incorrectly)
-- cross-cluster import is `action: import` on the same `Policy` kind used
-for backup/export, triggered on demand via `RunAction`.
+`ActionSet` kind - cross-cluster import is `action: import` on the same
+`Policy` kind used for backup/export, triggered via `RunAction`. This
+schema, and the AKS-side backup+export flow specifically, are verified
+against real clusters end-to-end, not just plausible from reading docs -
+`create.py`'s backup+export policy has actually completed successfully.
 
-This schema was verified against a real, locally-running K10 9.0.2 install
-(`kubectl explain <kind> --recursive`, matched against
-`kubectl api-resources`), and further confirmed by actually applying a
-Policy + RunAction shaped exactly like the ones this code generates and
-watching it reach `status.state: Failed` for the *expected* reason (a
-Profile that doesn't exist) rather than a schema-validation error - i.e.
-the structure is confirmed correct, not just plausible from reading docs.
-
-What is **not** independently verified: a real cross-cluster export ->
-import -> restore round trip with actual data, since that needs two real
-clusters and object storage. In particular, the `receiveString` field
-(a shared secret you generate and set identically in both the export and
-import Policy, pairing them - see `create_backup_export_policy` /
-`create_import_policy`) is a schema-and-reconciler-level inference, not a
-confirmed end-to-end behavior. If the first real run's import doesn't pick
-up the export, that pairing mechanism is the first thing to check - compare
-against the K10 dashboard's own "Show import details" flow
-(`kubectl port-forward -n kasten-io svc/gateway 8080:80` on either
-cluster) to see what it generates.
+**The EKS-side import setup is a manual step, confirmed necessary, not just
+unverified.** The `receiveString` field looked from the schema alone like a
+shared passphrase you could generate yourself and set identically on both
+sides. It isn't: supplying an arbitrary string on the import side fails
+with `cipher: message authentication failed` - it's a cryptographic
+envelope K10 generates on the export side, and the auto-created
+`<policy>-<hash>-migration-token` Secret on the export cluster turns out to
+be a different thing (a per-export data-encryption key, not the
+cross-cluster pairing token). There's no CRD field or API call found that
+produces the real value independently of the dashboard's "Show import
+details" action on the export policy - so that one step has to be done by
+hand (`kubectl port-forward -n kasten-io svc/gateway 8080:80` on each
+cluster to reach the dashboards). Once the Import Policy exists with the
+real value, the transform and restore steps work exactly as described
+above.
 
 ## Notes
 

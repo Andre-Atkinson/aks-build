@@ -12,7 +12,6 @@ automatically - you invoke it yourself, and destroy.py is the teardown path.
 
 import argparse
 import os
-import secrets
 import subprocess
 import sys
 from pathlib import Path
@@ -126,9 +125,15 @@ def main():
 
     # --- Phase 4: backup + export policy on AKS -----------------------------
     print("==> Creating backup/export policy on AKS and running it once")
-    receive_string = secrets.token_urlsafe(32)  # pairs this export with the EKS import policy below
+    # Confirmed on a real run: receiveString isn't a shared passphrase you
+    # can invent - it's a cryptographic envelope K10 itself generates on the
+    # export side (decrypting an arbitrary string fails with "cipher: message
+    # authentication failed"). There's no CRD field or API call that
+    # produces the real value independently of the dashboard's "Show import
+    # details" action, so import setup is a manual step - see the printed
+    # instructions below.
     aks_k10.create_backup_export_policy(
-        "veeamon-tour-backup", APP_NAMESPACE, "azureblob", "azureblob", receive_string
+        "veeamon-tour-backup", APP_NAMESPACE, "azureblob", "azureblob", receive_string=""
     )
     state, _ = aks_k10.run_policy("veeamon-tour-backup")
     print(f"    backup+export policy run: {state}")
@@ -136,25 +141,24 @@ def main():
         print("    backup/export did not complete - check the K10 dashboard on AKS before continuing")
         return 1
 
-    # --- Phase 5: import + transform on EKS ---------------------------------
-    print("==> Creating import policy + storage-class transform on EKS, then importing")
+    # --- Phase 5: storage-class transform on EKS (import itself is manual) --
+    print("==> Creating the storage-class transform on EKS")
     # "managed-csi" (AKS's default StorageClass) is only used in the
     # TransformSet's comment field - the actual JSON Patch is an
     # unconditional replace on /spec/storageClassName, so an exact match
     # isn't required for this to work correctly.
     eks_k10.create_transform_set("azure-to-ebs-storage-class", "managed-csi", "ebs-gp3")
-    eks_k10.create_import_policy("veeamon-tour-import", "azureblob", receive_string)
-    state, restore_point = eks_k10.run_policy("veeamon-tour-import")
-    print(f"    import policy run: {state}, restore point: {restore_point}")
-    if state != "Complete" or not restore_point:
-        print("    import did not complete - check the K10 dashboard on EKS before continuing")
-        return 1
 
     print(
-        "\nImport complete - restore point %s is now visible on EKS.\n"
-        "Run orchestrator/failover_demo.py to simulate an AKS failure and\n"
-        "restore this onto EKS with the storage-class transform applied."
-        % restore_point["name"]
+        "\n==> Import setup on EKS needs one manual step:\n"
+        "    1. Open the K10 dashboard on AKS (kubectl port-forward -n kasten-io svc/gateway 8080:80),\n"
+        "       find the veeamon-tour-backup policy's export action, and click 'Show import details'.\n"
+        "    2. Open the K10 dashboard on EKS, create an Import Policy against the\n"
+        "       'azureblob' profile, paste that import configuration in, and apply the\n"
+        "       'azure-to-ebs-storage-class' transform.\n"
+        "    3. Run the import once so a RestorePoint appears on EKS.\n"
+        "    Then run orchestrator/failover_demo.py to simulate an AKS failure and\n"
+        "    restore from that RestorePoint (you'll click Restore in the EKS dashboard)."
     )
     print("\nDone. AKS kubeconfig: %s | EKS kubeconfig: %s" % (aks_kubeconfig, eks_kubeconfig))
 
