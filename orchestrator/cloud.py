@@ -16,7 +16,6 @@ else (cluster lookup, kubeconfig generation) is direct SDK calls.
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import subprocess
@@ -69,7 +68,10 @@ def write_aks_kubeconfig(subscription_id: str, resource_group: str, cluster_name
     credential = DefaultAzureCredential()
     client = ContainerServiceClient(credential, subscription_id)
     creds = client.managed_clusters.list_cluster_user_credentials(resource_group, cluster_name)
-    kubeconfig_bytes = base64.b64decode(creds.kubeconfigs[0].value)
+    # The SDK already returns the raw kubeconfig YAML as a bytearray, not
+    # base64 text - no decoding needed (confirmed by inspecting the actual
+    # returned value; it starts with "apiVersion: v1\nclusters:...").
+    kubeconfig_bytes = bytes(creds.kubeconfigs[0].value)
     Path(out_path).write_bytes(kubeconfig_bytes)
     return out_path
 
