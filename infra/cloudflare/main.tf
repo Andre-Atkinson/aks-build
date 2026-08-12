@@ -11,6 +11,7 @@ terraform {
 provider "cloudflare" {}
 
 resource "cloudflare_load_balancer_monitor" "veeamon_tour" {
+  account_id     = var.account_id
   type           = "http"
   path           = "/healthz"
   expected_codes = "200"
@@ -20,7 +21,8 @@ resource "cloudflare_load_balancer_monitor" "veeamon_tour" {
 }
 
 resource "cloudflare_load_balancer_pool" "aks" {
-  name = "veeamon-tour-aks"
+  account_id = var.account_id
+  name       = "veeamon-tour-aks"
   origins {
     name    = "aks"
     address = var.aks_ip
@@ -30,7 +32,8 @@ resource "cloudflare_load_balancer_pool" "aks" {
 }
 
 resource "cloudflare_load_balancer_pool" "eks" {
-  name = "veeamon-tour-eks"
+  account_id = var.account_id
+  name       = "veeamon-tour-eks"
   origins {
     name    = "eks"
     address = var.eks_ip

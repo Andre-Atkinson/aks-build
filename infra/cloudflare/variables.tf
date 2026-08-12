@@ -1,3 +1,8 @@
+variable "account_id" {
+  description = "Cloudflare account ID - load balancer pools/monitors are account-scoped in the v4 provider"
+  type        = string
+}
+
 variable "zone_id" {
   description = "Cloudflare zone ID to create the DNS record and load balancer in"
   type        = string

@@ -133,9 +133,10 @@ def main():
     # --- Phase 5: import + transform on EKS ---------------------------------
     print("==> Creating import policy + storage-class transform on EKS, then importing")
     eks_k10 = K10Client(eks_kubeconfig)
-    # AKS's default StorageClass for the Bitnami MariaDB PVC. Confirm with
-    # `kubectl get storageclass` on the AKS cluster if this repo's Terraform
-    # or the AKS default ever changes.
+    # "managed-csi" (AKS's default StorageClass) is only used in the
+    # TransformSet's comment field - the actual JSON Patch is an
+    # unconditional replace on /spec/storageClassName, so an exact match
+    # isn't required for this to work correctly.
     eks_k10.create_transform_set("azure-to-ebs-storage-class", "managed-csi", "ebs-gp3")
     eks_k10.create_import_policy("veeamon-tour-import", "azureblob", receive_string)
     state, restore_point = eks_k10.run_policy("veeamon-tour-import")

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Simulate an AKS failure and fail the VeeamON Tour app over to EKS.
+"""Simulate an AKS failure, then wait for a manual EKS restore to catch up.
 
-Replaces corrupt.ps1. Captures the guestbook count on AKS, breaks AKS,
-triggers the restore on EKS (from the restore point create.py's import step
-already produced there, with the storage-class transform applied), and
-polls EKS until the app is back with the same count.
+Replaces corrupt.ps1. Captures the guestbook count on AKS, breaks AKS, and
+prints the RestorePoint to restore - the actual Restore is triggered by hand
+in the K10 dashboard on EKS (so it's visible on camera), not by this script.
+Once you click Restore there, this script polls EKS until the app is back
+with the same count.
 
 Usage:
     python failover_demo.py --aks-url http://<aks-ip> --eks-url http://<eks-ip> \\
@@ -68,14 +69,8 @@ def main():
     parser.add_argument("--aks-url", required=True, help="http://<aks LoadBalancer IP>")
     parser.add_argument("--eks-url", required=True, help="http://<eks LoadBalancer IP>")
     parser.add_argument("--mode", choices=["outage", "corrupt"], default="outage")
-    parser.add_argument("--timeout", type=int, default=900)
-    parser.add_argument(
-        "--restore-point-name",
-        default=None,
-        help="Defaults to the most recently imported RestorePoint on EKS",
-    )
+    parser.add_argument("--timeout", type=int, default=7200)
     parser.add_argument("--transform-set-name", default="azure-to-ebs-storage-class")
-    parser.add_argument("--restore-profile-name", default="azureblob")
     args = parser.parse_args()
 
     print("==> Capturing pre-failure guestbook count on AKS")
@@ -87,25 +82,18 @@ def main():
     else:
         simulate_corruption(args.aks_kubeconfig)
 
-    print("\n==> AKS side is down. Restoring onto EKS...")
     eks_k10 = K10Client(args.eks_kubeconfig)
-    restore_point_name = args.restore_point_name
-    if not restore_point_name:
-        latest = eks_k10.latest_restore_point()
-        if not latest:
-            print("FAIL: no RestorePoint found on EKS - did create.py's import step run?")
-            return 1
-        restore_point_name = latest["metadata"]["name"]
-    print(f"    restoring from RestorePoint {restore_point_name}")
-    state = eks_k10.restore_from_restore_point(
-        restore_point_name, args.restore_profile_name, args.transform_set_name
-    )
-    print(f"    restore action: {state}")
-    if state != "Complete":
-        print("FAIL: restore did not complete - check the K10 dashboard on EKS")
-        return 1
+    latest = eks_k10.latest_restore_point()
+    restore_point_name = latest["metadata"]["name"] if latest else "(none found yet)"
 
-    print("    restore complete, polling the app...")
+    print(
+        f"\n==> AKS side is down. Over to you:\n"
+        f"    In the K10 dashboard on EKS, restore RestorePoint '{restore_point_name}'\n"
+        f"    with the '{args.transform_set_name}' transform applied.\n"
+        f"    This script will keep polling {args.eks_url} until the app is back\n"
+        f"    with the pre-failure count ({baseline}).\n"
+    )
+
     deadline = time.time() + args.timeout
     while time.time() < deadline:
         try:

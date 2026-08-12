@@ -52,3 +52,7 @@ randomnumber.txt
 __pycache__/
 *.pyc
 .venv/
+
+# Downloaded Helm chart dependencies (fetched by `helm dependency update`) -
+# Chart.lock pins the version and is committed, the .tgz itself is not.
+app/veeamon-tour/chart/charts/
