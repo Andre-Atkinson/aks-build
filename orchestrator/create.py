@@ -79,21 +79,30 @@ def main():
     )
 
     # --- Phase 2: Kasten K10 on both clusters -------------------------------
-    blob_vars = {
-        "storage_account_name": azure_out["storage_account_name"],
-        "storage_account_key": storage_key,
-        "storage_container_name": azure_out["storage_container_name"],
-        "k10_version": K10_VERSION,
-    }
-
     print("==> Installing Kasten K10 on AKS")
     cloud.terraform_apply(
-        str(INFRA / "kasten-azure"), variables={"kube_config_path": aks_kubeconfig, **blob_vars}
+        str(INFRA / "kasten-azure"),
+        variables={"kube_config_path": aks_kubeconfig, "k10_version": K10_VERSION},
     )
     print("==> Installing Kasten K10 on EKS")
     cloud.terraform_apply(
-        str(INFRA / "kasten-aws"), variables={"kube_config_path": eks_kubeconfig, **blob_vars}
+        str(INFRA / "kasten-aws"),
+        variables={"kube_config_path": eks_kubeconfig, "k10_version": K10_VERSION},
     )
+
+    # Profile/Secret (and, on EKS, the VolumeSnapshotClass) are created here
+    # via the Kubernetes API directly rather than Terraform's
+    # kubernetes_manifest - see infra/kasten-azure/main.tf's comment for why.
+    print("==> Creating the shared Azure Blob profile on both clusters")
+    aks_k10 = K10Client(aks_kubeconfig)
+    aks_k10.create_profile_azure_blob(
+        "azureblob", azure_out["storage_account_name"], storage_key, azure_out["storage_container_name"]
+    )
+    eks_k10 = K10Client(eks_kubeconfig)
+    eks_k10.create_profile_azure_blob(
+        "azureblob", azure_out["storage_account_name"], storage_key, azure_out["storage_container_name"]
+    )
+    eks_k10.create_ebs_volume_snapshot_class()
 
     # --- Phase 3: deploy the VeeamON Tour app onto AKS ----------------------
     print("==> Deploying VeeamON Tour app to AKS")
@@ -116,11 +125,8 @@ def main():
     helm(*helm_args, kubeconfig=aks_kubeconfig)
 
     # --- Phase 4: backup + export policy on AKS -----------------------------
-    # The "azureblob" Profile itself is already created by infra/kasten-azure
-    # (Terraform) - just reference it here.
     print("==> Creating backup/export policy on AKS and running it once")
     receive_string = secrets.token_urlsafe(32)  # pairs this export with the EKS import policy below
-    aks_k10 = K10Client(aks_kubeconfig)
     aks_k10.create_backup_export_policy(
         "veeamon-tour-backup", APP_NAMESPACE, "azureblob", "azureblob", receive_string
     )
@@ -132,7 +138,6 @@ def main():
 
     # --- Phase 5: import + transform on EKS ---------------------------------
     print("==> Creating import policy + storage-class transform on EKS, then importing")
-    eks_k10 = K10Client(eks_kubeconfig)
     # "managed-csi" (AKS's default StorageClass) is only used in the
     # TransformSet's comment field - the actual JSON Patch is an
     # unconditional replace on /spec/storageClassName, so an exact match

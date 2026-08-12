@@ -69,51 +69,16 @@ resource "helm_release" "k10" {
   }
 }
 
-# Shared blob container that both the AKS and EKS K10 instances read/write
-# for the export -> import DR workflow.
-resource "kubernetes_secret" "azure_blob" {
-  metadata {
-    name      = "k10-azure-secret"
-    namespace = "kasten-io"
-  }
-  type = "secrets.kanister.io/azure"
-  data = {
-    azure_storage_account_id  = var.storage_account_name
-    azure_storage_environment = "AzurePublicCloud"
-    azure_storage_key         = var.storage_account_key
-  }
-
-  depends_on = [helm_release.k10]
-}
-
-resource "kubernetes_manifest" "azure_blob_profile" {
-  manifest = {
-    apiVersion = "config.kio.kasten.io/v1alpha1"
-    kind       = "Profile"
-    metadata = {
-      name      = "azureblob"
-      namespace = "kasten-io"
-    }
-    spec = {
-      type = "Location"
-      locationSpec = {
-        type = "ObjectStore"
-        objectStore = {
-          name            = var.storage_container_name
-          objectStoreType = "AZ"
-        }
-        credential = {
-          secretType = "AzStorageAccount"
-          secret = {
-            apiVersion = "v1"
-            kind       = "secret"
-            name       = kubernetes_secret.azure_blob.metadata[0].name
-            namespace  = "kasten-io"
-          }
-        }
-      }
-    }
-  }
-
-  depends_on = [kubernetes_secret.azure_blob]
-}
+# The "azureblob" Location Profile (and its backing Secret) is created by
+# orchestrator/k10_client.py after this apply finishes, not here.
+#
+# Terraform's kubernetes_manifest resource validates a manifest's
+# GroupVersionKind against the cluster's live CRD schema at PLAN time, not
+# apply time - depends_on doesn't help, since that only orders execution,
+# not this upfront schema lookup. Since the "Profile" CRD is installed by
+# helm_release.k10 in this SAME apply, the CRD doesn't exist yet when the
+# plan is computed, and this resource fails immediately with "API did not
+# recognize GroupVersionKind from manifest (CRD may not be installed)" -
+# confirmed on the first real run. The Kubernetes Python client has no such
+# restriction (it just POSTs to the API server), so Profile/Secret creation
+# moved there instead.

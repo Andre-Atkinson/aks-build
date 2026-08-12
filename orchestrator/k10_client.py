@@ -72,6 +72,38 @@ class K10Client:
     def get_namespaced(self, group: str, version: str, plural: str, namespace: str, name: str):
         return self.custom.get_namespaced_custom_object(group, version, namespace, plural, name)
 
+    def apply_cluster_scoped(self, group: str, version: str, plural: str, body: dict):
+        name = body["metadata"]["name"]
+        try:
+            self.custom.get_cluster_custom_object(group, version, plural, name)
+            return self.custom.patch_cluster_custom_object(group, version, plural, name, body)
+        except client.exceptions.ApiException as exc:
+            if exc.status != 404:
+                raise
+            return self.custom.create_cluster_custom_object(group, version, plural, body)
+
+    def create_ebs_volume_snapshot_class(self, name: str = "csi-ebs-vsc"):
+        """VolumeSnapshotClass for ebs.csi.aws.com, annotated for K10.
+
+        Cluster-scoped, so this can't go through apply_namespaced. Mirrors
+        the AKS-side csi-azuredisk-vsc pattern (which AKS ships a working
+        snapshotter for out of the box, so it's created via Terraform there
+        without hitting the plan-time CRD problem this avoids on EKS).
+        """
+        vsc = {
+            "apiVersion": "snapshot.storage.k8s.io/v1",
+            "kind": "VolumeSnapshotClass",
+            "metadata": {
+                "name": name,
+                "annotations": {"k10.kasten.io/is-snapshot-class": "true"},
+            },
+            "driver": "ebs.csi.aws.com",
+            "deletionPolicy": "Delete",
+        }
+        return self.apply_cluster_scoped(
+            "snapshot.storage.k8s.io", "v1", "volumesnapshotclasses", vsc
+        )
+
     def _wait_for_state(self, group: str, version: str, plural: str, name: str, timeout_seconds: int):
         deadline = time.time() + timeout_seconds
         while time.time() < deadline:

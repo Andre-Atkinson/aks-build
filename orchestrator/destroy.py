@@ -38,29 +38,23 @@ def main():
     )
     args = parser.parse_args()
 
-    azure_out = cloud.terraform_output(str(INFRA / "azure"))
-    storage_key = cloud.get_storage_account_key(
-        args.subscription_id, azure_out["resource_group_name"], azure_out["storage_account_name"]
-    )
-    blob_vars = {
-        "storage_account_name": azure_out["storage_account_name"],
-        "storage_account_key": storage_key,
-        "storage_container_name": azure_out["storage_container_name"],
-    }
-
     if not args.skip_cloudflare:
         print("==> Destroying Cloudflare load balancer")
         cloud.terraform_destroy(str(INFRA / "cloudflare"))
 
+    # The Profile/Secret/VolumeSnapshotClass k10_client.py creates directly
+    # via the Kubernetes API (not Terraform - see infra/kasten-azure/main.tf)
+    # aren't tracked here, but don't need to be: they get destroyed with the
+    # cluster itself in the EKS/AKS teardown below.
     print("==> Uninstalling Kasten K10 from EKS")
     cloud.terraform_destroy(
         str(INFRA / "kasten-aws"),
-        variables={"kube_config_path": str(KUBECONFIG_DIR / "eks.yaml"), **blob_vars},
+        variables={"kube_config_path": str(KUBECONFIG_DIR / "eks.yaml")},
     )
     print("==> Uninstalling Kasten K10 from AKS")
     cloud.terraform_destroy(
         str(INFRA / "kasten-azure"),
-        variables={"kube_config_path": str(KUBECONFIG_DIR / "aks.yaml"), **blob_vars},
+        variables={"kube_config_path": str(KUBECONFIG_DIR / "aks.yaml")},
     )
 
     print("==> Destroying EKS + VPC")

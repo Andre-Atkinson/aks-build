@@ -50,22 +50,13 @@ resource "kubernetes_storage_class" "ebs_gp3" {
   }
 }
 
-resource "kubernetes_manifest" "ebs_vsc" {
-  manifest = {
-    apiVersion = "snapshot.storage.k8s.io/v1"
-    kind       = "VolumeSnapshotClass"
-    metadata = {
-      name = "csi-ebs-vsc"
-      annotations = {
-        "k10.kasten.io/is-snapshot-class" = "true"
-      }
-    }
-    driver         = "ebs.csi.aws.com"
-    deletionPolicy = "Delete"
-  }
-
-  depends_on = [helm_release.snapshot_controller]
-}
+# The "csi-ebs-vsc" VolumeSnapshotClass is created by
+# orchestrator/k10_client.py after this apply finishes, not here - its CRD
+# comes from helm_release.snapshot_controller in this SAME apply, so
+# Terraform's kubernetes_manifest (which validates against the live CRD
+# schema at PLAN time, before anything in this apply has actually run) would
+# fail the same way the Profile resource below did on the first real run.
+# See infra/kasten-azure/main.tf's comment for the full explanation.
 
 resource "helm_release" "k10" {
   name             = "k10"
@@ -96,52 +87,9 @@ resource "helm_release" "k10" {
     value = "andre.atkinson@veeam.com"
   }
 
-  depends_on = [kubernetes_manifest.ebs_vsc]
+  depends_on = [kubernetes_storage_class.ebs_gp3, helm_release.snapshot_controller]
 }
 
-resource "kubernetes_secret" "azure_blob" {
-  metadata {
-    name      = "k10-azure-secret"
-    namespace = "kasten-io"
-  }
-  type = "secrets.kanister.io/azure"
-  data = {
-    azure_storage_account_id  = var.storage_account_name
-    azure_storage_environment = "AzurePublicCloud"
-    azure_storage_key         = var.storage_account_key
-  }
-
-  depends_on = [helm_release.k10]
-}
-
-resource "kubernetes_manifest" "azure_blob_profile" {
-  manifest = {
-    apiVersion = "config.kio.kasten.io/v1alpha1"
-    kind       = "Profile"
-    metadata = {
-      name      = "azureblob"
-      namespace = "kasten-io"
-    }
-    spec = {
-      type = "Location"
-      locationSpec = {
-        type = "ObjectStore"
-        objectStore = {
-          name            = var.storage_container_name
-          objectStoreType = "AZ"
-        }
-        credential = {
-          secretType = "AzStorageAccount"
-          secret = {
-            apiVersion = "v1"
-            kind       = "secret"
-            name       = kubernetes_secret.azure_blob.metadata[0].name
-            namespace  = "kasten-io"
-          }
-        }
-      }
-    }
-  }
-
-  depends_on = [kubernetes_secret.azure_blob]
-}
+# The "azureblob" Location Profile (and its backing Secret) is created by
+# orchestrator/k10_client.py after this apply finishes - see
+# infra/kasten-azure/main.tf's comment for why.

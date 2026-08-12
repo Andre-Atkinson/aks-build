@@ -13,18 +13,3 @@ variable "expose_dashboard" {
   type    = bool
   default = false
 }
-
-# Same shared Azure Blob container used on the AKS side (infra/azure output),
-# so EKS's K10 can read the restore points exported from AKS.
-variable "storage_account_name" {
-  type = string
-}
-
-variable "storage_account_key" {
-  type      = string
-  sensitive = true
-}
-
-variable "storage_container_name" {
-  type = string
-}
