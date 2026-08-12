@@ -1,6 +1,9 @@
-# Build and push app/veeamon-tour/frontend first, then point this at your registry:
-#   docker build -t <registry>/veeamon-tour:latest app/veeamon-tour/frontend
-#   docker push <registry>/veeamon-tour:latest
+# Build and push app/veeamon-tour/frontend first, then point this at your registry.
+# Use --platform linux/amd64 even on Apple Silicon - AKS/EKS nodes are
+# x86_64, and a plain `docker build` here produces an arm64 image that fails
+# with "exec format error" on the cluster (hit on a real run):
+#   docker buildx build --platform linux/amd64 -t <registry>/veeamon-tour:latest \
+#     --push app/veeamon-tour/frontend
 image:
   repository: ""
   tag: "latest"

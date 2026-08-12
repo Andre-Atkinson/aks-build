@@ -105,12 +105,14 @@ def main():
         },
     )
 
+    aks_dashboard_url = "http://localhost:8080/k10/ (kubectl --kubeconfig .kubeconfigs/aks.yaml port-forward -n kasten-io svc/gateway 8080:80)"
+    eks_dashboard_url = "http://localhost:8081/k10/ (kubectl --kubeconfig .kubeconfigs/eks.yaml port-forward -n kasten-io svc/gateway 8081:80)"
     if args.expose_dashboard:
         print("==> Waiting for K10 dashboard LoadBalancer IPs")
-        aks_dashboard_ip = wait_for_loadbalancer_ip(aks_kubeconfig, "kasten-io", "gateway-ext")
-        eks_dashboard_ip = wait_for_loadbalancer_ip(eks_kubeconfig, "kasten-io", "gateway-ext")
-        print(f"    AKS dashboard: http://{aks_dashboard_ip}/k10/")
-        print(f"    EKS dashboard: http://{eks_dashboard_ip}/k10/")
+        aks_dashboard_url = f"http://{cloud.wait_for_loadbalancer_ip(aks_kubeconfig, 'kasten-io', 'gateway-ext')}/k10/"
+        eks_dashboard_url = f"http://{cloud.wait_for_loadbalancer_ip(eks_kubeconfig, 'kasten-io', 'gateway-ext')}/k10/"
+        print(f"    AKS dashboard: {aks_dashboard_url}")
+        print(f"    EKS dashboard: {eks_dashboard_url}")
 
     # Profile/Secret (and, on EKS, the VolumeSnapshotClass) are created here
     # via the Kubernetes API directly rather than Terraform's
@@ -129,7 +131,6 @@ def main():
     # --- Phase 3: deploy the VeeamON Tour app onto AKS ----------------------
     print("==> Deploying VeeamON Tour app to AKS")
     chart_dir = str(REPO_ROOT / "app" / "veeamon-tour" / "chart")
-    subprocess.run(["helm", "dependency", "update", chart_dir], check=True)
     image_repo, _, image_tag = args.image.partition(":")
     helm_args = [
         "upgrade", "--install", "veeamon-tour",
@@ -138,8 +139,8 @@ def main():
         "--set", f"image.repository={image_repo}",
         "--set", f"image.tag={image_tag or 'latest'}",
     ]
-    # Left unset, the Bitnami chart auto-generates these and stores them only
-    # in the in-cluster Secret - these overrides are optional.
+    # Left unset, templates/mariadb-secret.yaml auto-generates these and
+    # stores them only in the in-cluster Secret - these overrides are optional.
     if os.environ.get("MARIADB_ROOT_PASSWORD"):
         helm_args += ["--set", f"mariadb.auth.rootPassword={os.environ['MARIADB_ROOT_PASSWORD']}"]
     if os.environ.get("MARIADB_APP_PASSWORD"):
@@ -173,15 +174,15 @@ def main():
     eks_k10.create_transform_set("azure-to-ebs-storage-class", "managed-csi", "ebs-gp3")
 
     print(
-        "\n==> Import setup on EKS needs one manual step:\n"
-        "    1. Open the K10 dashboard on AKS (kubectl port-forward -n kasten-io svc/gateway 8080:80),\n"
-        "       find the veeamon-tour-backup policy's export action, and click 'Show import details'.\n"
-        "    2. Open the K10 dashboard on EKS, create an Import Policy against the\n"
-        "       'azureblob' profile, paste that import configuration in, and apply the\n"
-        "       'azure-to-ebs-storage-class' transform.\n"
-        "    3. Run the import once so a RestorePoint appears on EKS.\n"
-        "    Then run orchestrator/failover_demo.py to simulate an AKS failure and\n"
-        "    restore from that RestorePoint (you'll click Restore in the EKS dashboard)."
+        f"\n==> Import setup on EKS needs one manual step:\n"
+        f"    1. Open the K10 dashboard on AKS ({aks_dashboard_url}),\n"
+        f"       find the veeamon-tour-backup policy's export action, and click 'Show import details'.\n"
+        f"    2. Open the K10 dashboard on EKS ({eks_dashboard_url}), create an Import\n"
+        f"       Policy against the 'azureblob' profile, paste that import configuration in,\n"
+        f"       and apply the 'azure-to-ebs-storage-class' transform.\n"
+        f"    3. Run the import once so a RestorePoint appears on EKS.\n"
+        f"    Then run orchestrator/failover_demo.py to simulate an AKS failure and\n"
+        f"    restore from that RestorePoint (you'll click Restore in the EKS dashboard)."
     )
     print("\nDone. AKS kubeconfig: %s | EKS kubeconfig: %s" % (aks_kubeconfig, eks_kubeconfig))
 

@@ -6,20 +6,9 @@ the `kubernetes` package's CustomObjectsApi), not the K10 dashboard's
 internal HTTP API. CRDs are K10's documented extension point; the
 dashboard's HTTP API is not.
 
-Schema below was verified against a real, locally-running K10 9.0.2
-install (`kubectl explain <kind> --recursive` against
-`kubectl api-resources`), and cross-checked by actually applying a Policy +
-RunAction and watching it reach `status.state: Failed` for the expected
-reason (a Profile that doesn't exist) rather than a schema-validation
-error - i.e. the *structure* is confirmed correct, not just plausible from
-docs. What is NOT independently verified end-to-end: a real cross-cluster
-export -> import -> restore cycle with actual data, since that needs two
-real clusters and object storage. In particular, the `receiveString`
-pairing mechanism (see create_export_policy/create_import_policy) is a
-schema-and-reconciler-level inference - K10 accepted and processed a policy
-shaped this way, but a real cross-cluster round trip hasn't been run.
-
-Key corrections vs. earlier assumptions in this file:
+Verified against a real K10 9.0.2 install, not just plausible from docs:
+- The AKS-side backup+export flow (create_backup_export_policy + run_policy)
+  has actually completed successfully end to end on a live cluster.
 - There is no `ImportPolicy` or generic `ActionSet` kind. Cross-cluster
   import is `action: import` on the same `Policy` kind used for backup/
   export (config.kio.kasten.io/v1alpha1), with `importParameters`. On-demand
@@ -30,6 +19,13 @@ Key corrections vs. earlier assumptions in this file:
   `RestoreAction` (actions.kio.kasten.io/v1alpha1) whose `spec.subject`
   references the `RestorePoint` object (apps.kio.kasten.io/v1alpha1) by
   name, with `spec.transforms[].transformSetRef` applying the TransformSet.
+- `receiveString` (create_backup_export_policy / create_import_policy) is
+  NOT a shared passphrase you can generate yourself - confirmed on a real
+  run: an arbitrary string on the import side fails with "cipher: message
+  authentication failed". It's a cryptographic envelope K10 generates on
+  the export side, obtainable only via the dashboard's "Show import
+  details" action - see create.py's Phase 4/5 and the README's
+  "Cross-cluster import" section for the manual step this requires.
 """
 
 from __future__ import annotations

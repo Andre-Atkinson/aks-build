@@ -40,8 +40,8 @@ def simulate_outage(kubeconfig_path: str):
 def simulate_corruption(kubeconfig_path: str, release_name: str = "veeamon-tour"):
     """Drop the app database instead of destroying the whole namespace.
 
-    Reads the root password from the <release>-mariadb Secret the Bitnami
-    chart auto-generates - nothing is hardcoded here.
+    Reads the root password from the <release>-mariadb Secret the chart's
+    templates/mariadb-secret.yaml auto-generates - nothing is hardcoded here.
     """
     print("==> Dropping the MariaDB database on AKS (simulated data corruption)")
     kube_config.load_kube_config(config_file=kubeconfig_path)
