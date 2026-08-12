@@ -162,9 +162,15 @@ Prices also drift over time and by region.
 
 **Rough total while both clusters are up: ~$0.45-0.60/hr combined.**
 
-**Not included above:** `infra/cloudflare` is billed through your Cloudflare
-plan (a subscription tier, not this kind of per-hour infra cost) and isn't
-part of the default `create.py` run anyway.
+**Not included above:** `infra/cloudflare` needs Cloudflare's **Load
+Balancing add-on - $5/month recurring**, not a per-hour cost like everything
+else here, and not prorated down when you tear the rest of this down (2
+endpoints included, 500K free queries/month, $0.50/500K after that). It's
+cosmetic on top of the actual DR story (`failover_demo.py` already proves
+the backup/restore mechanics by hitting AKS/EKS IPs directly) - skip it
+unless you specifically want a single DNS name that flips automatically for
+the recording. It's also not part of the default `create.py` run either
+way.
 
 ## Advanced tuning
 
