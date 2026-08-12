@@ -122,15 +122,49 @@ environment:
 - Node pools default to burstable, small SKUs (`Standard_B2ms` on AKS,
   `t3.large` on EKS) at 2 nodes each - enough for K10 + the app + MariaDB,
   not tuned for anything beyond that.
-- The AWS side still incurs a flat EKS control-plane charge
-  (~US$0.10/hour) regardless of node size - that's an EKS floor cost, not
-  something this build can shrink further.
 - Destroy right after recording: run step 6 above (or at minimum
   `python orchestrator/destroy.py`) as soon as you're done. Nothing here
   auto-expires or auto-shuts-down.
 - If you only want to check what would change before destroying,
   `terraform plan -destroy` in each `infra/*` directory shows it without
   applying.
+
+### Exactly what gets created, and roughly what it costs
+
+Every billable resource `create.py` provisions (plus the ones that don't
+cost anything, for completeness). USD, `ap-southeast-2` / `Australia East`
+list pricing as of this writing - **not** pulled from a live pricing API,
+so treat these as rough, and check the
+[Azure](https://azure.microsoft.com/en-us/pricing/calculator/) /
+[AWS](https://calculator.aws/) pricing calculators for anything precise.
+Prices also drift over time and by region.
+
+**Azure** (`infra/azure`, `infra/kasten-azure`)
+
+| Resource | Purpose | Approx. cost while running |
+|---|---|---|
+| AKS cluster control plane | Kubernetes API/control plane | $0/hr (Free tier - default, no SLA) |
+| 2x `Standard_B2ms` nodes | AKS worker nodes | ~$0.08-0.10/hr each, ~$0.16-0.20/hr total |
+| Storage account + blob container (Standard LRS) | Shared K10 export/import location | ~$0.01/hr or less at this scale |
+| MariaDB PVC (1Gi Azure Disk) | App database volume | <$0.01/hr |
+| Resource group, K10 Helm release, Policies/Profiles/StorageClasses | Container/config objects | $0 - no direct cost |
+
+**AWS** (`infra/aws`, `infra/kasten-aws`)
+
+| Resource | Purpose | Approx. cost while running |
+|---|---|---|
+| EKS cluster control plane | Kubernetes API/control plane | $0.10/hr flat (fixed, not reducible) |
+| 2x `t3.large` nodes | EKS worker nodes | ~$0.08-0.10/hr each, ~$0.16-0.20/hr total |
+| 1x NAT Gateway | Outbound internet for private subnets | ~$0.045/hr + data processing (negligible for this workload) |
+| EBS root volumes (2x ~20GB gp3) | Node OS disks | ~$0.005/hr |
+| MariaDB PVC (1Gi EBS, after restore) | App database volume, post-failover | <$0.01/hr |
+| VPC/subnets/route tables, IAM role, EKS addons, K10 Helm release, snapshot-controller, Policies/Profiles/StorageClasses | Networking/config objects | $0 - no direct cost |
+
+**Rough total while both clusters are up: ~$0.45-0.60/hr combined.**
+
+**Not included above:** `infra/cloudflare` is billed through your Cloudflare
+plan (a subscription tier, not this kind of per-hour infra cost) and isn't
+part of the default `create.py` run anyway.
 
 ## Advanced tuning
 
