@@ -102,6 +102,11 @@ module "eks" {
   # K10 needs: (1) the EBS CSI driver to snapshot/provision volumes, and
   # (2) the external-snapshotter CRDs/controller (installed separately in
   # infra/kasten-aws, since EKS does not ship them by default).
+  #
+  # vpc-cni and eks-pod-identity-agent need before_compute=true - without it,
+  # the module creates the node group before the CNI addon exists, so nodes
+  # come up with no pod networking and never go Ready ("cni plugin not
+  # initialized"), which is exactly what happened on the first real run.
   addons = {
     aws-ebs-csi-driver = {
       pod_identity_association = [{
@@ -109,10 +114,14 @@ module "eks" {
         service_account = "ebs-csi-controller-sa"
       }]
     }
-    eks-pod-identity-agent = {}
-    coredns                = {}
-    kube-proxy             = {}
-    vpc-cni                = {}
+    eks-pod-identity-agent = {
+      before_compute = true
+    }
+    coredns    = {}
+    kube-proxy = {}
+    vpc-cni = {
+      before_compute = true
+    }
   }
 
   tags = {
