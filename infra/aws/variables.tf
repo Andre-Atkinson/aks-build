@@ -5,9 +5,9 @@ variable "region" {
 }
 
 variable "kubernetes_version" {
-  description = "EKS Kubernetes minor version (kept aligned with the AKS build in infra/azure)"
+  description = "EKS Kubernetes minor version (kept aligned with the AKS build in infra/azure). Check `aws eks describe-cluster-versions` for the current STANDARD_SUPPORT default before relying on this."
   type        = string
-  default     = "1.33"
+  default     = "1.36"
 }
 
 variable "node_instance_type" {

@@ -10,9 +10,9 @@ variable "location" {
 }
 
 variable "kubernetes_version" {
-  description = "AKS Kubernetes minor version (kept aligned with the EKS build in infra/aws)"
+  description = "AKS Kubernetes minor version (kept aligned with the EKS build in infra/aws). AKS versions age out of standard support and start requiring LTS enrollment - check `az aks get-versions --location <region> --output table` for a version showing 'KubernetesOfficial' (not just 'AKSLongTermSupport') before relying on this default."
   type        = string
-  default     = "1.33"
+  default     = "1.36"
 }
 
 variable "node_count" {
