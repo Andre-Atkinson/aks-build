@@ -270,6 +270,21 @@ class K10Client:
 
     # -- on-demand actions ----------------------------------------------------
 
+    def wait_for_policy_valid(self, policy_name: str, timeout_seconds: int = 60):
+        """Poll a Policy's own status until K10's controller finishes
+        validating it. Without this, a RunAction created immediately after
+        the Policy fails instantly with "Cannot execute action for an
+        invalid policy" - confirmed on a real run: the same Policy, run
+        again a few minutes later with no changes, worked fine.
+        """
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            policy = self.get_namespaced(CONFIG_GROUP, CONFIG_VERSION, "policies", NAMESPACE, policy_name)
+            if policy.get("status", {}).get("validation") == "Success":
+                return
+            time.sleep(3)
+        raise TimeoutError(f"Policy {policy_name} did not validate within {timeout_seconds}s")
+
     def run_policy(self, policy_name: str, timeout_seconds: int = 1800):
         """Create a RunAction to trigger a Policy immediately, and wait for it.
 
@@ -277,6 +292,7 @@ class K10Client:
         {"name", "namespace"} of the RestorePoint created by a backup or
         import action, or None for actions that don't produce one.
         """
+        self.wait_for_policy_valid(policy_name)
         run_action = {
             "apiVersion": f"{ACTIONS_GROUP}/{ACTIONS_VERSION}",
             "kind": "RunAction",
