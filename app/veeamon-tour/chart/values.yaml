@@ -13,16 +13,20 @@ service:
   port: 80
   targetPort: 8080
 
-# auth.rootPassword / auth.password are intentionally omitted so the
-# Bitnami chart auto-generates random passwords and stores them in the
-# <release>-mariadb Secret (keys: mariadb-root-password, mariadb-password) -
-# nothing secret is committed here. Override with --set if you want fixed
+# auth.rootPassword / auth.password are intentionally left blank - the
+# templates auto-generate random passwords (persisted in the <release>-mariadb
+# Secret across upgrades) when unset. Override with --set if you want fixed
 # values, e.g. from $MARIADB_ROOT_PASSWORD / $MARIADB_APP_PASSWORD.
 mariadb:
   enabled: true
+  image:
+    repository: mariadb
+    tag: "11"
   auth:
     database: "veeamon_tour"
     username: "veeamon"
+    rootPassword: ""
+    password: ""
   primary:
     persistence:
       size: 1Gi

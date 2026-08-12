@@ -4,8 +4,9 @@ description: Small two-tier VeeamON Tour demo app (Flask frontend + MariaDB) use
 type: application
 version: 0.1.0
 appVersion: "1.0.0"
-dependencies:
-  - name: mariadb
-    version: "20.x.x"
-    repository: "oci://registry-1.docker.io/bitnamicharts"
-    condition: mariadb.enabled
+# No Helm chart dependency for MariaDB - Bitnami's registry prunes old image
+# tags on a schedule outside our control (confirmed: the chart's default
+# image tag became unpullable between when this was built and the first
+# real run). The MariaDB StatefulSet is self-authored in templates/ using
+# the official docker.io/library/mariadb image instead, which isn't subject
+# to that churn.
